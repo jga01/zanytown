@@ -5,273 +5,501 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
-const fs = require("fs"); // Needed for directory/file operations
+const fs = require("fs");
+require("dotenv").config(); // Load environment variables FIRST
+const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 
 // --- Application Modules ---
 const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config");
-const ServerRoom = require("./lib/room");
+const ServerRoom = require("./lib/room"); // Loads the DB-aware room.js
 const SocketHandlers = require("./server_socket_handlers");
 const ConsoleCommands = require("./server_console");
-const { ServerGameObject } = require("./lib/game_objects"); // For global nextId management
+// ServerGameObject needed for instanceof checks, ServerAvatar for explicit use
+const { ServerGameObject, ServerAvatar } = require("./lib/game_objects");
+const connectDB = require("./lib/db");
+const authRoutes = require("./routes/authRoutes");
+const User = require("./models/user");
+const Furniture = require("./models/furniture"); // Load Furniture model (used indirectly via room.js and handlers)
 
 // --- Server Setup ---
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server); // Attach Socket.IO
+const io = new Server(server);
+
+// --- Middleware ---
+app.use(express.json()); // Middleware to parse JSON bodies
 
 // --- Game State ---
-const rooms = new Map(); // Map<roomId, ServerRoom> - Manages all active rooms
+const rooms = new Map(); // Map<roomId, ServerRoom>
 let gameLoopInterval;
-let consoleInterface; // Stores the readline interface instance
-const clients = {}; // Map: socket.id -> { socket, avatarId } - Tracks connected clients globally
+let consoleInterface;
+// Map: socket.id -> { socket, avatarId (runtime), userId (persistent User._id) }
+const clients = {};
 
-// --- Initialization and Room Loading ---
-try {
-  // 1. Ensure Save Directory Exists
-  const saveDir = path.resolve(__dirname, SERVER_CONFIG.DEFAULT_SAVE_DIR);
-  if (!fs.existsSync(saveDir)) {
-    console.log(`Creating save directory: ${saveDir}`);
-    fs.mkdirSync(saveDir, { recursive: true });
-  }
-
-  // 2. Reset Global ID Counter before loading any rooms/items
-  ServerGameObject.nextId = 0;
-  console.log("Initializing Server Rooms...");
-
-  // 3. Load Initial Rooms specified in config
-  SERVER_CONFIG.INITIAL_ROOMS.forEach((roomId) => {
-    if (!roomId) {
-      console.warn("Skipping invalid room ID found in INITIAL_ROOMS config.");
-      return;
-    }
-    console.log(` - Loading room: ${roomId}...`);
-    try {
-      const roomInstance = new ServerRoom(roomId); // Constructor now loads state from file if exists
-      rooms.set(roomId, roomInstance);
-      console.log(`   Room '${roomId}' loaded successfully.`);
-    } catch (roomLoadError) {
-      console.error(`   ERROR loading room '${roomId}':`, roomLoadError);
-      // Decide if server should continue without this room or stop
-    }
-  });
-  console.log(`Finished loading initial rooms. ${rooms.size} rooms active.`);
-
-  // 4. Determine the highest nextId needed based on loaded items across ALL rooms
-  let maxLoadedItemId = 0;
-  rooms.forEach((room) => {
-    room.furniture.forEach((f) => {
-      maxLoadedItemId = Math.max(maxLoadedItemId, f.id);
-    });
-    // Consider avatars if they were persisted across restarts (not currently implemented)
-  });
-
-  // 5. Load Global State (e.g., nextId) if it exists
-  const globalStatePath = path.join(saveDir, "global_state.json");
-  let loadedNextId = 0;
+// --- Database Helper Functions ---
+async function findUserByIdFromDB(userId) {
   try {
-    if (fs.existsSync(globalStatePath)) {
-      const globalStateData = fs.readFileSync(globalStatePath, "utf8");
-      const globalState = JSON.parse(globalStateData);
-      loadedNextId = globalState.nextId || 0;
-      console.log(`Loaded global nextId from file: ${loadedNextId}`);
-    } else {
-      console.log(
-        "Global state file not found, using ID calculated from loaded items."
-      );
+    // Validate if userId is a valid MongoDB ObjectId format
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      // console.log(`DB Helper: Invalid userId format: ${userId}`); // Can be noisy
+      return null;
     }
-  } catch (e) {
-    console.error("Error loading or parsing global_state.json:", e);
-  }
-
-  // 6. Set the global nextId to be safely ahead of any loaded ID or saved global ID
-  ServerGameObject.nextId = Math.max(maxLoadedItemId + 1, loadedNextId);
-  console.log(
-    `Global ServerGameObject.nextId set to: ${ServerGameObject.nextId}`
-  );
-
-  // 7. Initialize Socket Handlers with dependencies (pass rooms map)
-  SocketHandlers.initializeHandlers(rooms, io, clients);
-
-  // --- Get the specific room change handler ---
-  // This assumes initializeHandlers has run and SocketHandlers is fully loaded
-  const roomChangeHandler = SocketHandlers.handleChangeRoom;
-  if (typeof roomChangeHandler !== "function") {
-    throw new Error(
-      "Failed to get handleChangeRoom function from SocketHandlers module."
-    );
-  }
-
-  // 8. Setup Express Static Files and API Routes
-  const publicPath = path.join(__dirname, "public");
-  console.log(`Serving static files from: ${publicPath}`);
-  app.use(express.static(publicPath));
-
-  // API endpoint to serve the shared configuration
-  app.get("/api/config", (req, res) => {
-    console.log("GET /api/config requested");
-    try {
-      // Send the SHARED_CONFIG object as JSON
-      res.json(SHARED_CONFIG);
-    } catch (error) {
-      console.error("Error sending SHARED_CONFIG via API:", error);
-      res.status(500).send("Error retrieving server configuration.");
+    // Find user by ID and return as a plain JavaScript object
+    const user = await User.findById(userId).lean();
+    if (!user) {
+      // console.log(`DB Helper: User ${userId} not found.`); // Can be noisy
+      return null;
     }
-  });
-
-  // Serve the main HTML file for the root path
-  app.get("/", (req, res) => {
-    res.sendFile(path.join(publicPath, "index.html"));
-  });
-
-  // --- Socket.IO Connection Handling ---
-  // Delegate connection handling to the dedicated module
-  io.on("connection", SocketHandlers.handleConnection);
-
-  // --- Server Game Loop (Iterates Active Rooms) ---
-  let lastTickTime = Date.now();
-  function gameTick() {
-    const now = Date.now();
-    const deltaTimeMs = now - lastTickTime;
-    lastTickTime = now;
-
-    // Update each active room instance
-    rooms.forEach((room, roomId) => {
-      if (!room) {
-        console.error(
-          `Game tick skipped for room ${roomId}: Room instance not found!`
-        );
-        return; // Skip this room if somehow null/undefined
-      }
-      try {
-        // Pass io instance for potential broadcasts needed during update (like emote ends)
-        const updates = room.update(deltaTimeMs, io, roomChangeHandler);
-
-        // Broadcast any changes that occurred during the tick TO THE RELEVANT ROOM
-        if (updates.changedAvatars && updates.changedAvatars.length > 0) {
-          updates.changedAvatars.forEach((avatarDTO) => {
-            // Ensure broadcast goes to the avatar's *current* room
-            const targetRoomId = avatarDTO.roomId || roomId; // Use DTO's roomId if present, else assume current tick's room
-            io.to(targetRoomId).emit("avatar_update", avatarDTO);
-          });
-        }
-        // Add other room-specific update broadcasts here if needed (e.g., furniture animations)
-      } catch (roomUpdateError) {
-        console.error(`Error updating room ${roomId}:`, roomUpdateError);
-        // Consider adding logic to handle persistent room errors (e.g., disable updates)
-      }
-    });
+    // Ensure inventory is a plain object if it was stored as a Map (lean should handle this)
+    if (user.inventory instanceof Map) {
+      user.inventory = Object.fromEntries(user.inventory);
+    }
+    return user;
+  } catch (error) {
+    console.error(`DB Helper Error finding user ${userId}:`, error);
+    throw error; // Re-throw to be caught by caller
   }
-
-  // --- Start Server ---
-  server.listen(SERVER_CONFIG.PORT, () => {
-    console.log(`Server listening on http://localhost:${SERVER_CONFIG.PORT}`);
-    // Start game loop *after* server is listening
-    gameLoopInterval = setInterval(gameTick, 1000 / SERVER_CONFIG.TICK_RATE);
-    console.log(
-      `Game loop started with tick rate: ${SERVER_CONFIG.TICK_RATE}Hz.`
-    );
-    // Initialize console commands *after* server is up (pass rooms map)
-    consoleInterface = ConsoleCommands.initializeConsole(
-      rooms,
-      io,
-      clients,
-      shutdown
-    );
-  });
-} catch (error) {
-  console.error("FATAL: Failed to initialize server components:", error);
-  // Attempt to clean up if partial initialization happened (e.g., close server if listening)
-  if (server && server.listening) {
-    server.close();
-  }
-  process.exit(1); // Exit if core initialization fails
 }
 
-// --- Graceful Shutdown ---
-function shutdown() {
+async function updateUserInDB(userId, updateData) {
+  try {
+    // Validate userId format
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      console.error(`DB Helper Update: Invalid userId format: ${userId}`);
+      return null;
+    }
+    // Find user by ID and update using $set operator
+    // `new: true` returns the modified document
+    // `lean: true` returns a plain JavaScript object
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: updateData },
+      { new: true, lean: true }
+    );
+    if (!updatedUser) {
+      console.error(`DB Helper: Failed to find user ${userId} for update.`);
+      return null;
+    }
+    return updatedUser;
+  } catch (error) {
+    console.error(`DB Helper Error updating user ${userId}:`, error);
+    throw error; // Re-throw
+  }
+}
+
+// --- Graceful Shutdown Function ---
+async function shutdown() {
   console.log("\nInitiating graceful shutdown...");
 
-  // 1. Stop accepting new connections (implicit via server.close)
-  // 2. Stop game loop
+  // 1. Stop game loop
   if (gameLoopInterval) {
     clearInterval(gameLoopInterval);
     console.log("Game loop stopped.");
   }
 
-  // 3. Close console input
+  // 2. Close console input
   if (consoleInterface) {
-    consoleInterface.close(); // Closes readline interface
+    try {
+      consoleInterface.close();
+    } catch (e) {
+      /* Ignore */
+    }
   }
 
-  // 4. Save final state (Global and Per-Room)
-  console.log("Attempting final state save for all rooms...");
-  // Save global state (e.g., nextId)
-  const saveDir = path.resolve(__dirname, SERVER_CONFIG.DEFAULT_SAVE_DIR); // Recalculate just in case
-  const globalStatePath = path.join(saveDir, "global_state.json");
-  const globalState = { nextId: ServerGameObject.nextId };
-  try {
-    fs.writeFileSync(globalStatePath, JSON.stringify(globalState, null, 2));
-    console.log(
-      `Global state (nextId: ${globalState.nextId}) saved to ${globalStatePath}.`
-    );
-  } catch (e) {
-    console.error("Error saving global state during shutdown:", e);
-  }
-  // Save state for each individual room
-  rooms.forEach((room, roomId) => {
-    try {
-      if (room) {
-        room.saveStateToFile(); // Saves to its specific file (e.g., room_state_main_lobby.json)
-      } else {
-        console.warn(`Cannot save room ${roomId}, instance not found.`);
+  // 3. Save Player State to Database
+  console.log("Saving player state before shutdown...");
+  const savePromises = [];
+  const activeAvatars = [];
+  // Collect all active avatars from all rooms
+  rooms.forEach((room) => {
+    Object.values(room.avatars).forEach((avatar) => {
+      if (avatar instanceof ServerAvatar) {
+        // Ensure it's an avatar object
+        activeAvatars.push(avatar);
       }
-    } catch (e) {
-      console.error(
-        `Error saving state for room ${roomId} during shutdown:`,
-        e
-      );
+    });
+  });
+  // Create a map from runtime avatarId to persistent userId
+  const avatarIdToUserIdMap = {};
+  Object.values(clients).forEach((clientInfo) => {
+    if (clientInfo && clientInfo.userId && clientInfo.avatarId != null) {
+      avatarIdToUserIdMap[clientInfo.avatarId] = clientInfo.userId;
     }
   });
 
-  // 5. Disconnect all clients gracefully
-  console.log(`Disconnecting ${Object.keys(clients).length} clients...`);
-  io.disconnectSockets(true); // true = close underlying connection
+  // Iterate through active avatars and schedule DB updates
+  for (const avatar of activeAvatars) {
+    const userId = avatarIdToUserIdMap[avatar.id]; // Lookup userId using runtime avatar.id
+    if (userId) {
+      try {
+        const playerState = {
+          currency: avatar.currency,
+          inventory: Object.fromEntries(avatar.inventory || new Map()), // Convert Map to Object
+          bodyColor: avatar.bodyColor,
+          lastRoomId: avatar.roomId,
+          lastX: Math.round(avatar.x),
+          lastY: Math.round(avatar.y),
+          lastZ: avatar.z,
+        };
+        savePromises.push(updateUserInDB(userId, playerState)); // Add promise to array
+      } catch (error) {
+        console.error(
+          `Error preparing save data for avatar ${avatar.id} (User ID: ${userId}):`,
+          error
+        );
+      }
+    } else {
+      // Should be rare if client mapping is correct
+      console.warn(
+        `Could not find userId for avatar ${avatar.id} (${avatar.name}) during shutdown save.`
+      );
+    }
+  }
 
-  // 6. Close Socket.IO server
+  // Wait for all player saves to complete
+  try {
+    await Promise.all(savePromises);
+    console.log(
+      `Player state saving process completed. ${savePromises.length} players processed.`
+    );
+  } catch (saveError) {
+    console.error("Error during bulk player state saving:", saveError);
+  }
+
+  // 4. Room state saving is handled transactionally (on placement/pickup etc.)
+  // No bulk room save needed here anymore.
+
+  // 5. Global state (e.g., runtime counters) does not need file persistence anymore.
+  // REMOVED: Saving of ServerGameObject.nextId to global_state.json
+
+  // 6. Disconnect all clients
+  console.log(
+    `Disconnecting ${Object.keys(clients).length} remaining clients...`
+  );
+  io.emit("chat_message", {
+    avatarName: "Server",
+    text: "Server is shutting down. Goodbye!",
+    className: "server-msg",
+  });
+  io.disconnectSockets(true); // Force disconnect immediately
+
+  // 7. Close Socket.IO server
   io.close((err) => {
     if (err) console.error("Error closing Socket.IO:", err);
     else console.log("Socket.IO server closed.");
 
-    // 7. Close HTTP server
+    // 8. Close HTTP server
     server.close(() => {
       console.log("HTTP server closed.");
-      console.log("Shutdown complete.");
-      process.exit(0); // Exit process cleanly
+      // 9. Disconnect Database
+      mongoose
+        .disconnect()
+        .then(() => console.log("MongoDB disconnected."))
+        .catch((e) => console.error("Error disconnecting MongoDB:", e))
+        .finally(() => {
+          console.log("Shutdown complete.");
+          process.exit(0); // Exit process cleanly
+        });
     });
   });
 
-  // Force exit after a timeout if shutdown hangs
+  // 10. Force exit timeout
   setTimeout(() => {
     console.error("Graceful shutdown timed out after 5 seconds. Forcing exit.");
     process.exit(1);
-  }, 5000);
-}
+  }, 5000).unref(); // Unref so it doesn't keep the process alive if shutdown is fast
+} // --- End shutdown ---
 
-// Listen for termination signals
-process.on("SIGINT", shutdown); // Ctrl+C
-process.on("SIGTERM", shutdown); // `kill` command (standard termination)
+// --- ASYNC STARTUP FUNCTION ---
+async function startServer() {
+  try {
+    // 1. Connect to Database
+    await connectDB();
 
-// Optional: Catch unhandled exceptions to prevent abrupt crashes
-process.on("uncaughtException", (error) => {
-  console.error("UNCAUGHT EXCEPTION:", error);
-  // Attempt a graceful shutdown on critical errors
-  shutdown();
-  // Give shutdown a moment, then force exit if it hangs
-  setTimeout(() => process.exit(1), 7000);
+    // 2. Initialization and Room Loading from DB
+    console.log("Initializing Server Rooms from Database/Defaults...");
+    // Ensure save directory exists (though mainly for potential future use now)
+    const saveDir = path.resolve(__dirname, SERVER_CONFIG.DEFAULT_SAVE_DIR);
+    if (!fs.existsSync(saveDir)) {
+      console.log(`Creating save directory: ${saveDir}`);
+      fs.mkdirSync(saveDir, { recursive: true });
+    }
+
+    // Load initial rooms defined in config
+    for (const roomId of SERVER_CONFIG.INITIAL_ROOMS) {
+      if (!roomId || typeof roomId !== "string") {
+        console.warn("Skipping invalid/empty room ID in INITIAL_ROOMS.");
+        continue;
+      }
+      console.log(` - Initializing room: ${roomId}...`);
+      try {
+        // Create instance (sets default layout)
+        const roomInstance = new ServerRoom(roomId);
+        // Load layout from RoomState collection and furniture from Furniture collection
+        await roomInstance.loadStateFromDB();
+        rooms.set(roomId, roomInstance);
+        console.log(`   Room '${roomId}' initialized successfully.`);
+      } catch (roomLoadError) {
+        console.error(`   ERROR initializing room '${roomId}':`, roomLoadError);
+        // If default room fails, it's critical
+        if (roomId === SERVER_CONFIG.DEFAULT_ROOM_ID) {
+          console.error(
+            `FATAL: Failed to initialize default room '${roomId}'. Exiting.`
+          );
+          process.exit(1);
+        }
+      }
+    }
+    if (rooms.size === 0) {
+      console.error(
+        "FATAL: No rooms were loaded/initialized successfully. Check INITIAL_ROOMS and database connection/state. Exiting."
+      );
+      process.exit(1);
+    }
+    console.log(`Finished initializing rooms. ${rooms.size} room(s) active.`);
+
+    // 3. Runtime ID counter is reset automatically (part of ServerGameObject class static)
+    // REMOVED: Loading/Calculation of persistent nextId
+
+    // 4. Initialize Socket Handlers (pass DB helpers)
+    SocketHandlers.initializeHandlers(
+      rooms,
+      io,
+      clients,
+      findUserByIdFromDB, // Pass DB function
+      updateUserInDB // Pass DB function
+    );
+    const roomChangeHandler = SocketHandlers.handleChangeRoom; // Get reference for game loop
+    if (typeof roomChangeHandler !== "function") {
+      throw new Error(
+        "Failed to get handleChangeRoom function from SocketHandlers module."
+      );
+    }
+
+    // 5. API Routes
+    app.use("/api/auth", authRoutes);
+
+    // 6. Static Files / Root / Config API
+    const publicPath = path.join(__dirname, "public");
+    console.log(`Serving static files from: ${publicPath}`);
+    app.use(express.static(publicPath));
+    // API endpoint to provide shared config to the client
+    app.get("/api/config", (req, res) => {
+      res.json(SHARED_CONFIG);
+    });
+    // Serve login page
+    app.get("/login", (req, res) => {
+      res.sendFile(path.join(publicPath, "login.html"));
+    });
+    // Serve main game page (index.html)
+    app.get("/", (req, res) => {
+      // Could add logic here to redirect to /login if no valid token cookie/header,
+      // but current flow relies on client-side JS checking localStorage.
+      res.sendFile(path.join(publicPath, "index.html"));
+    });
+
+    // 7. Socket.IO Authentication Middleware
+    io.use(async (socket, next) => {
+      const socketIdLog = `[Socket ${socket.id}]`;
+      const token = socket.handshake.auth.token; // Get token from client handshake
+      if (!token) {
+        console.log(`Socket Auth Failed ${socketIdLog}: No token.`);
+        return next(new Error("Authentication error: No token provided."));
+      }
+      try {
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+          // Should not happen if .env is loaded
+          console.error("FATAL: JWT_SECRET is not defined!");
+          return next(new Error("Server configuration error."));
+        }
+
+        // Verify the token asynchronously
+        const decoded = await new Promise((resolve, reject) => {
+          jwt.verify(token, secret, (err, decodedPayload) => {
+            if (err) return reject(err); // Handles expired, invalid signature etc.
+            resolve(decodedPayload);
+          });
+        });
+        const userId = decoded.userId; // Extract userId from token payload
+
+        // Validate userId format (ensure it's a valid ObjectId string)
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+          console.log(
+            `Socket Auth Failed ${socketIdLog}: Invalid token payload (userId missing or invalid format).`
+          );
+          return next(
+            new Error("Authentication error: Invalid token payload.")
+          );
+        }
+
+        // Optional: Check user existence in DB here if desired
+        // const userExists = await User.exists({ _id: userId });
+        // if (!userExists) { /* ... */ }
+
+        // Handle multiple connections: Disconnect previous socket for the same user
+        const existingClient = Object.values(clients).find(
+          (c) => c.userId === userId && c.socket.id !== socket.id
+        );
+        if (existingClient) {
+          console.log(
+            `Socket Auth ${socketIdLog}: User ${userId} already connected via ${existingClient.socket.id}. Disconnecting previous.`
+          );
+          existingClient.socket.emit(
+            "force_disconnect",
+            "Logged in from another location."
+          );
+          existingClient.socket.disconnect(true);
+          // disconnect handler will clean up clients map entry
+        }
+
+        // Attach persistent userId to the socket object for use in handlers
+        socket.userId = userId;
+        // console.log(`Socket Auth Success ${socketIdLog}: UserID ${socket.userId}`); // Success log (can be noisy)
+        next(); // Proceed to connection handler
+      } catch (err) {
+        // Handle JWT verification errors
+        let errorMsg = "Authentication error: Invalid token.";
+        if (err.name === "TokenExpiredError")
+          errorMsg = "Authentication error: Token expired.";
+        else if (err.name === "JsonWebTokenError")
+          errorMsg = "Authentication error: Malformed token.";
+        else
+          console.error(
+            `${socketIdLog} Unexpected token verification error:`,
+            err
+          ); // Log unexpected errors
+        console.log(
+          `Socket Auth Failed ${socketIdLog}: ${err.name || "Error"} - ${
+            err.message
+          }`
+        );
+        next(new Error(errorMsg)); // Reject connection
+      }
+    }); // --- End of io.use Auth Middleware ---
+
+    // 8. Socket.IO Connection Handling (Calls async handler)
+    io.on("connection", (socket) => SocketHandlers.handleConnection(socket));
+
+    // 9. Server Game Loop
+    let lastTickTime = Date.now();
+    function gameTick() {
+      const now = Date.now();
+      const deltaTimeMs = now - lastTickTime;
+      lastTickTime = now;
+      // Cap delta time to prevent large jumps if server hangs
+      const cappedDeltaTimeMs = Math.min(deltaTimeMs, 100); // e.g., max 100ms step
+
+      // Update each active room
+      rooms.forEach((room, roomId) => {
+        if (!room) {
+          console.error(`Tick skip: Room ${roomId} not found!`);
+          return;
+        }
+        try {
+          // update() handles avatar movement and returns DTOs of changed avatars
+          const updates = room.update(cappedDeltaTimeMs, io, roomChangeHandler);
+          // Broadcast updates for changed avatars TO THEIR CURRENT ROOM
+          if (updates.changedAvatars && updates.changedAvatars.length > 0) {
+            updates.changedAvatars.forEach((avatarDTO) => {
+              const targetRoomId = avatarDTO.roomId || roomId; // Use DTO's room or fallback
+              // Ensure the room the avatar is supposed to be in still exists
+              if (rooms.has(targetRoomId)) {
+                io.to(targetRoomId).emit("avatar_update", avatarDTO);
+              } else {
+                // Should be rare, but possible if room is removed while update pending
+                console.warn(
+                  `Tick update: Tried to send update for avatar ${avatarDTO.id} to non-existent room ${targetRoomId}`
+                );
+              }
+            });
+          }
+          // Note: Furniture updates are broadcast directly by the handlers now
+        } catch (roomUpdateError) {
+          console.error(
+            `Error during update for room ${roomId}:`,
+            roomUpdateError
+          );
+          // Consider how to handle persistent room errors - maybe attempt unload/reload?
+        }
+      });
+    } // --- End gameTick ---
+
+    // 10. Start Server Listening and Game Loop
+    server.listen(SERVER_CONFIG.PORT, () => {
+      console.log(`Server listening on http://localhost:${SERVER_CONFIG.PORT}`);
+      gameLoopInterval = setInterval(gameTick, 1000 / SERVER_CONFIG.TICK_RATE);
+      console.log(
+        `Game loop started with tick rate: ${SERVER_CONFIG.TICK_RATE}Hz.`
+      );
+      // Initialize console commands interface
+      consoleInterface = ConsoleCommands.initializeConsole(
+        rooms,
+        io,
+        clients,
+        shutdown
+      );
+    });
+  } catch (error) {
+    // Catch errors during the main async startup sequence
+    console.error("FATAL: Failed to initialize server:", error);
+    if (server && server.listening) {
+      // Close server if it started listening before error
+      server.close();
+    }
+    // Ensure DB connection is closed if opened before error
+    if (
+      mongoose.connection.readyState === 1 ||
+      mongoose.connection.readyState === 2
+    ) {
+      await mongoose.disconnect();
+      console.log("MongoDB disconnected due to startup error.");
+    }
+    process.exit(1); // Exit with error code
+  }
+} // --- End startServer async function ---
+
+// --- Run the startup function ---
+startServer();
+
+// --- Signal Handlers & Global Error Catching ---
+process.on("SIGINT", shutdown); // Handle Ctrl+C
+process.on("SIGTERM", shutdown); // Handle kill signals
+
+// Catch uncaught exceptions to attempt graceful shutdown
+process.on("uncaughtException", (error, origin) => {
+  console.error(`\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`);
+  console.error(`UNCAUGHT EXCEPTION (${origin}):`, error);
+  console.error(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`);
+  // Attempt graceful shutdown only once
+  if (typeof shutdown === "function" && !shutdown.called) {
+    shutdown.called = true; // Flag to prevent recursive shutdown calls
+    shutdown();
+  } else {
+    console.error(
+      "Shutdown function unavailable or already called. Forcing exit."
+    );
+    process.exit(1);
+  }
+  // Force exit after timeout if graceful shutdown hangs
+  setTimeout(() => {
+    console.error("Force exiting after uncaught exception timeout.");
+    process.exit(1);
+  }, 7000).unref();
 });
+
+// Catch unhandled promise rejections (good practice, though less critical than exceptions)
 process.on("unhandledRejection", (reason, promise) => {
-  console.error("UNHANDLED REJECTION:", reason);
-  // Optional: Treat unhandled promise rejections as critical errors too
-  // shutdown();
-  // setTimeout(() => process.exit(1), 7000);
+  console.error(`\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`);
+  console.error("UNHANDLED PROMISE REJECTION:");
+  if (reason instanceof Error) {
+    console.error("Reason:", reason.message);
+    console.error(reason.stack);
+  } else {
+    console.error("Reason:", reason);
+  }
+  console.error("Promise:", promise);
+  console.error(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`);
+  // Consider logging more details or exiting depending on severity
 });

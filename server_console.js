@@ -1,20 +1,39 @@
 "use strict";
 
 const readline = require("readline");
-const { SHARED_CONFIG } = require("./lib/config"); // For avatar states, item defs etc.
+const path = require("path"); // Needed for save/load global state
+const fs = require("fs"); // Needed for save/load global state
+const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config"); // For avatar states, item defs etc.
+const { ServerGameObject } = require("./lib/game_objects"); // For accessing global nextId
+
+// --- FIX: Correct the path to the User model ---
+// Assuming server_console.js is in the project root and models is a subdirectory
+const User = require("./models/user");
+
 // Import specific handler if needed for direct calls (like teleport using room change)
-const { handleChangeRoom } = require("./server_socket_handlers");
+// Ensure the path is correct based on your project structure
+let handleChangeRoom;
+try {
+  // Assuming server_socket_handlers is also in the root
+  handleChangeRoom = require("./server_socket_handlers").handleChangeRoom;
+} catch (e) {
+  console.error(
+    "Failed to import handleChangeRoom from server_socket_handlers:",
+    e
+  );
+  handleChangeRoom = null; // Set to null if import fails
+}
 
 // --- Globals passed from server.js ---
 let rooms; // Map<roomId, ServerRoom>
 let io;
-let clients; // Map: socket.id -> { socket, avatarId }
+let clients; // Map: socket.id -> { socket, avatarId, userId }
 let shutdownCallback; // Function to call for graceful shutdown
 
 /**
  * Initializes the console command interface.
- * @param {Map<string, ServerRoom>} roomsMap - The map of active room instances.
- * @param {SocketIO.Server} ioInstance - The Socket.IO server instance.
+ * @param {Map<string, import('./lib/room')>} roomsMap - The map of active room instances.
+ * @param {import('socket.io').Server} ioInstance - The Socket.IO server instance.
  * @param {object} clientsMap - The map tracking client connections.
  * @param {Function} shutdownFunc - The function to trigger server shutdown.
  */
@@ -33,9 +52,10 @@ function initializeConsole(roomsMap, ioInstance, clientsMap, shutdownFunc) {
   console.log("\nServer console ready. Type 'help' for commands.");
   rl.prompt();
 
-  rl.on("line", (input) => {
-    handleConsoleInput(input.trim());
-    rl.prompt(); // Show prompt again
+  rl.on("line", async (input) => {
+    // <-- Make the line handler async
+    await handleConsoleInput(input.trim()); // <-- await the async handler
+    rl.prompt(); // Show prompt again after command finishes
   }).on("close", () => {
     console.log("Console input closed.");
     // This usually happens during shutdown sequence
@@ -47,50 +67,58 @@ function initializeConsole(roomsMap, ioInstance, clientsMap, shutdownFunc) {
 /**
  * Helper function to find an avatar globally across all rooms by name.
  * @param {string} name - The avatar name (case-insensitive search).
- * @returns {{avatar: ServerAvatar | null, room: ServerRoom | null}} - The avatar and the room they are in, or nulls if not found.
+ * @returns {{avatar: import('./lib/game_objects').ServerAvatar | null, room: import('./lib/room') | null}} - The avatar and the room they are in, or nulls if not found.
  */
 function findAvatarGlobally(name) {
   if (!name) return { avatar: null, room: null };
   const lowerName = name.toLowerCase();
   for (const [roomId, room] of rooms.entries()) {
     // Search within the room's avatars map
-    const avatar = Object.values(room.avatars).find(
-      (a) => a.name.toLowerCase() === lowerName
-    );
-    if (avatar) {
-      // Ensure consistency: avatar should know its room ID
-      if (avatar.roomId !== roomId) {
-        console.warn(
-          `Consistency Warning: Avatar ${avatar.name} found in room ${roomId} structure, but avatar.roomId is ${avatar.roomId}. Using ${roomId}.`
-        );
-        // Optionally correct: avatar.roomId = roomId;
+    // Ensure room.avatars exists and is an object/map
+    if (room && typeof room.avatars === "object" && room.avatars !== null) {
+      const avatar = Object.values(room.avatars).find(
+        (a) =>
+          a && typeof a.name === "string" && a.name.toLowerCase() === lowerName
+      );
+      if (avatar) {
+        // Ensure consistency: avatar should know its room ID
+        if (avatar.roomId !== roomId) {
+          console.warn(
+            `Consistency Warning: Avatar ${avatar.name} found in room ${roomId} structure, but avatar.roomId is ${avatar.roomId}. Using ${roomId}.`
+          );
+          // Optionally correct: avatar.roomId = roomId;
+        }
+        return { avatar, room }; // Return avatar and the room they are in
       }
-      return { avatar, room }; // Return avatar and the room they are in
+    } else {
+      // console.warn(`Room ${roomId} has invalid 'avatars' property.`); // Can be noisy
     }
   }
   return { avatar: null, room: null }; // Not found in any room
 }
 
 /**
- * Processes a command entered into the server console.
+ * Processes a command entered into the server console. (Now Async)
  * @param {string} input - The trimmed command line input.
  */
-function handleConsoleInput(input) {
+async function handleConsoleInput(input) {
+  // <-- Make function async
   if (!input) return;
 
-  // Basic split, consider quotes later if needed
-  const args = input.match(/(?:[^\s"]+|"[^"]*")+/g) || []; // Handles quoted strings somewhat
+  // Improved regex to handle quotes better, including empty quotes
+  const args = input.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
   const command = args[0]?.toLowerCase();
-  const params = args
-    .slice(1)
-    .map((arg) =>
-      arg.startsWith('"') && arg.endsWith('"') ? arg.slice(1, -1) : arg
-    ); // Remove quotes from params
+  // Remove surrounding quotes from parameters
+  const params = args.slice(1).map((arg) => {
+    if (arg.length >= 2 && arg.startsWith('"') && arg.endsWith('"')) {
+      return arg.slice(1, -1);
+    }
+    return arg;
+  });
 
   if (!command) return;
 
   try {
-    // Wrap command execution in try/catch for safety
     switch (command) {
       case "help":
         console.log("Available commands:");
@@ -116,11 +144,14 @@ function handleConsoleInput(input) {
           "  givegold <user> <amount>     - Give gold (searches all rooms)."
         );
         console.log(
-          "  save <room_id|all>           - Save specific room state or all rooms."
+          "  save <room_id|all>           - Save specific room state (DB) or all rooms."
         );
         console.log(
-          "  load <room_id|all>           - Load specific room state or all rooms (Warning: Disruptive)."
+          "  load <room_id|all>           - Load specific room state (DB) or all rooms (Warning: Disruptive)."
         );
+        console.log(
+          "  debuguser <username>         - Show DB vs Live state for a user."
+        ); // Added help entry
         console.log(
           "  stop / exit                  - Shut down the server gracefully."
         );
@@ -136,6 +167,7 @@ function handleConsoleInput(input) {
             avatarId: null,
             avatarName: "Server",
             text: message,
+            className: "server-msg", // Add class for styling
           });
         } else {
           console.log("Usage: say <message>");
@@ -153,31 +185,30 @@ function handleConsoleInput(input) {
         break;
 
       case "listusers":
-        const targetRoomId = params[0];
-        if (targetRoomId) {
-          const room = rooms.get(targetRoomId);
+        const targetRoomIdList = params[0];
+        if (targetRoomIdList) {
+          const room = rooms.get(targetRoomIdList);
           if (room) {
-            console.log(`Users in room '${targetRoomId}':`);
+            console.log(`Users in room '${targetRoomIdList}':`);
             const users = room
               .getUserList()
               .sort((a, b) => a.name.localeCompare(b.name)); // Sort list
-            if (users.length === 0) console.log("  (Empty)");
-            else
+            if (users.length === 0) {
+              console.log("  (Empty)");
+            } else {
               users.forEach((u) => {
-                const avatar =
-                  room.avatars[
-                    Object.keys(room.avatars).find(
-                      (sid) => room.avatars[sid]?.id === u.id
-                    )
-                  ]; // Find avatar by ID in room
+                const avatar = Object.values(room.avatars).find(
+                  (av) => av && av.id === u.id
+                );
                 console.log(
                   `  - ${u.name} (ID: ${u.id})${
                     avatar ? ` Socket: ${avatar.socketId}` : ""
                   }`
                 );
               });
+            }
           } else {
-            console.log(`Error: Room '${targetRoomId}' not found.`);
+            console.log(`Error: Room '${targetRoomIdList}' not found.`);
           }
         } else {
           console.log("Users Online (All Rooms):");
@@ -185,25 +216,24 @@ function handleConsoleInput(input) {
           const roomIds = Array.from(rooms.keys()).sort();
           roomIds.forEach((roomId) => {
             const room = rooms.get(roomId);
-            const users = room
-              .getUserList()
-              .sort((a, b) => a.name.localeCompare(b.name));
-            if (users.length > 0) {
-              console.log(`  --- Room: ${roomId} ---`);
-              users.forEach((u) => {
-                const avatar =
-                  room.avatars[
-                    Object.keys(room.avatars).find(
-                      (sid) => room.avatars[sid]?.id === u.id
-                    )
-                  ];
-                console.log(
-                  `    - ${u.name} (ID: ${u.id})${
-                    avatar ? ` Socket: ${avatar.socketId}` : ""
-                  }`
-                );
-              });
-              totalUsers += users.length;
+            if (room && typeof room.getUserList === "function") {
+              const users = room
+                .getUserList()
+                .sort((a, b) => a.name.localeCompare(b.name));
+              if (users.length > 0) {
+                console.log(`  --- Room: ${roomId} ---`);
+                users.forEach((u) => {
+                  const avatar = Object.values(room.avatars).find(
+                    (av) => av && av.id === u.id
+                  );
+                  console.log(
+                    `    - ${u.name} (ID: ${u.id})${
+                      avatar ? ` Socket: ${avatar.socketId}` : ""
+                    }`
+                  );
+                });
+                totalUsers += users.length;
+              }
             }
           });
           if (totalUsers === 0) console.log("  (No users connected)");
@@ -212,18 +242,19 @@ function handleConsoleInput(input) {
 
       case "kick":
         if (params.length === 1) {
-          const targetName = params[0];
-          const { avatar: targetAvatar } = findAvatarGlobally(targetName); // Use global find
-          if (targetAvatar && clients[targetAvatar.socketId]) {
+          const targetNameKick = params[0];
+          const { avatar: targetAvatarKick } =
+            findAvatarGlobally(targetNameKick); // Use global find
+          if (targetAvatarKick && clients[targetAvatarKick.socketId]) {
             console.log(
-              `Kicking user ${targetAvatar.name} (Room: ${targetAvatar.roomId}, Socket: ${targetAvatar.socketId})...`
+              `Kicking user ${targetAvatarKick.name} (Room: ${targetAvatarKick.roomId}, Socket: ${targetAvatarKick.socketId})...`
             );
             // Force disconnect the client's socket
-            clients[targetAvatar.socketId].socket.disconnect(true);
+            clients[targetAvatarKick.socketId].socket.disconnect(true);
             // The 'disconnect' event handler will manage cleanup in room.avatars and clients map
           } else {
             console.log(
-              `User '${targetName}' not found or associated socket missing.`
+              `User '${targetNameKick}' not found or associated socket missing.`
             );
           }
         } else {
@@ -233,16 +264,16 @@ function handleConsoleInput(input) {
 
       case "teleport":
         if (params.length === 4) {
-          const targetName = params[0];
+          const targetNameTp = params[0];
           const destRoomId = params[1];
           const targetX = parseInt(params[2], 10);
           const targetY = parseInt(params[3], 10);
 
-          const { avatar: targetAvatar } = findAvatarGlobally(targetName); // Find user globally
+          const { avatar: targetAvatarTp } = findAvatarGlobally(targetNameTp); // Find user globally
           const destRoom = rooms.get(destRoomId); // Find destination room
 
-          if (!targetAvatar) {
-            console.log(`Error: User '${targetName}' not found.`);
+          if (!targetAvatarTp) {
+            console.log(`Error: User '${targetNameTp}' not found.`);
           } else if (!destRoom) {
             console.log(`Error: Destination room '${destRoomId}' not found.`);
           } else if (isNaN(targetX) || isNaN(targetY)) {
@@ -253,14 +284,13 @@ function handleConsoleInput(input) {
             // Validate target tile in destination room IS VALID TERRAIN
             if (destRoom.isValidTile(targetX, targetY)) {
               console.log(
-                `Teleporting ${targetAvatar.name} from ${targetAvatar.roomId} to ${destRoomId}(${targetX}, ${targetY})...`
+                `Teleporting ${targetAvatarTp.name} from ${targetAvatarTp.roomId} to ${destRoomId}(${targetX}, ${targetY})...`
               );
 
               // Use the room change logic, even if staying in the same room (ensures state reset)
-              const socket = clients[targetAvatar.socketId]?.socket;
-              if (socket) {
+              const socket = clients[targetAvatarTp.socketId]?.socket;
+              if (socket && typeof handleChangeRoom === "function") {
                 // Pass target coords directly to room change handler
-                // Ensure the handler is imported or available in this scope
                 handleChangeRoom(socket, {
                   targetRoomId: destRoomId,
                   targetX: targetX,
@@ -269,12 +299,8 @@ function handleConsoleInput(input) {
                 console.log(` -> Teleport requested via room change handler.`);
               } else {
                 console.error(
-                  ` -> Cannot teleport: Socket for ${targetName} not found in clients map.`
+                  ` -> Cannot teleport: Socket for ${targetNameTp} not found or handleChangeRoom handler is missing/failed to import.`
                 );
-                // Manual teleport attempt if socket handler isn't callable? Less safe.
-                // console.log(" -> Attempting manual teleport (less safe)...");
-                // targetAvatar.prepareForRoomChange(destRoomId, targetX, targetY);
-                // destRoom.addAvatar(targetAvatar); // This is risky without socket sync
               }
             } else {
               console.log(
@@ -302,10 +328,17 @@ function handleConsoleInput(input) {
         ) {
           console.log(usage);
           if (!isGold) {
-            const validIds = SHARED_CONFIG.FURNITURE_DEFINITIONS.map(
-              (d) => d.id
-            ).join(", ");
-            console.log(`Valid Item IDs: ${validIds}`);
+            try {
+              const validIds = SHARED_CONFIG.FURNITURE_DEFINITIONS.map(
+                (d) => d.id
+              ).join(", ");
+              console.log(`Valid Item IDs: ${validIds}`);
+            } catch (e) {
+              console.error(
+                "Could not list item IDs - SHARED_CONFIG error?",
+                e
+              );
+            }
           }
           break;
         }
@@ -393,6 +426,7 @@ function handleConsoleInput(input) {
         }
         break;
 
+      // --- SAVE COMMAND (Updated for Async DB) ---
       case "save":
         const saveTarget = params[0];
         if (!saveTarget) {
@@ -401,139 +435,327 @@ function handleConsoleInput(input) {
         }
 
         if (saveTarget.toLowerCase() === "all") {
-          console.log("Saving all rooms...");
+          console.log("Saving all rooms to DB...");
           let successCount = 0;
           let failCount = 0;
-          rooms.forEach((room) => {
-            if (room.saveStateToFile()) successCount++;
-            else failCount++;
+          const allRoomSaves = [];
+          rooms.forEach((room, roomId) => {
+            if (room && typeof room.saveStateToDB === "function") {
+              // Add the promise to the array, handle individual errors
+              allRoomSaves.push(
+                room
+                  .saveStateToDB()
+                  .then((ok) => {
+                    if (ok) successCount++;
+                    else failCount++;
+                  })
+                  .catch((e) => {
+                    console.error(`Error saving room ${roomId} to DB:`, e);
+                    failCount++;
+                  })
+              );
+            } else {
+              console.warn(
+                `Room ${roomId} cannot be saved (invalid instance or method missing).`
+              );
+              failCount++;
+            }
           });
+          await Promise.all(allRoomSaves); // Wait for all save attempts
           console.log(
-            `Save complete. ${successCount} succeeded, ${failCount} failed.`
+            `DB Save complete. ${successCount} succeeded, ${failCount} failed.`
           );
-          // Also save global state like nextId
-          const saveDir = require("path").resolve(
+
+          // Also save global state like nextId to file
+          const saveDir = path.resolve(
             __dirname,
-            "..",
-            require("./lib/config").SERVER_CONFIG.DEFAULT_SAVE_DIR
-          );
-          const globalState = {
-            nextId: require("./lib/game_objects").ServerGameObject.nextId,
-          };
+            SERVER_CONFIG.DEFAULT_SAVE_DIR
+          ); // Adjusted path assuming console is in root
+          const globalState = { nextId: ServerGameObject.nextId }; // Use the imported class static property
           try {
-            require("fs").writeFileSync(
-              require("path").join(saveDir, "global_state.json"),
-              JSON.stringify(globalState)
+            if (!fs.existsSync(saveDir))
+              fs.mkdirSync(saveDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(saveDir, "global_state.json"),
+              JSON.stringify(globalState, null, 2)
             );
-            console.log(`Global state (nextId: ${globalState.nextId}) saved.`);
+            console.log(
+              `Global state (nextId: ${globalState.nextId}) saved to file.`
+            );
           } catch (e) {
-            console.error("Error saving global state:", e);
+            console.error("Error saving global state to file:", e);
           }
         } else {
           const roomToSave = rooms.get(saveTarget);
-          if (roomToSave) {
-            if (!roomToSave.saveStateToFile()) {
+          if (roomToSave && typeof roomToSave.saveStateToDB === "function") {
+            console.log(`Saving room '${saveTarget}' to DB...`);
+            if (!(await roomToSave.saveStateToDB())) {
+              // await the save
               console.log(
-                `Save failed for room '${saveTarget}'. Check permissions or disk space.`
+                `DB Save failed for room '${saveTarget}'. Check logs.`
               );
+            } else {
+              console.log(`Room '${saveTarget}' saved to DB successfully.`);
             }
           } else {
-            console.log(`Error: Room '${saveTarget}' not found.`);
+            console.log(
+              `Error: Room '${saveTarget}' not found or cannot be saved.`
+            );
           }
         }
         break;
 
-      case "load": // Loading requires careful thought about active players
+      // --- LOAD COMMAND (Updated for Async DB) ---
+      case "load":
         const loadTarget = params[0];
         if (!loadTarget) {
           console.log("Usage: load <room_id|all>");
           break;
         }
 
-        console.log(
-          "Warning: Loading rooms while server is running can disrupt players in those rooms."
+        console.warn(
+          "Warning: Loading rooms from DB while server runs can disrupt players."
         );
 
         if (loadTarget.toLowerCase() === "all") {
-          console.log(
-            "Reloading state for all currently loaded rooms from files..."
-          );
+          console.log("Reloading state for all loaded rooms from DB...");
           let successCount = 0;
           let failCount = 0;
-          // This reloads furniture data for existing room instances.
-          // It does NOT dynamically load rooms not present at server start.
-          rooms.forEach((room, roomId) => {
-            console.log(`Reloading state for room: ${roomId}...`);
-            if (room.loadStateFromFile()) {
-              // Force clients in that room to get the new state
-              io.to(roomId).emit("room_state", room.getStateDTO());
-              // Also update the user list in case furniture changes affect walkability/standing
-              io.to(roomId).emit("user_list_update", room.getUserList());
-              successCount++;
+          // Use for...of to allow await inside the loop
+          for (const [roomId, room] of rooms.entries()) {
+            if (room && typeof room.loadStateFromDB === "function") {
+              console.log(`Reloading state for room: ${roomId}...`);
+              try {
+                if (await room.loadStateFromDB()) {
+                  // await the load
+                  // Force clients in that room to get the new state
+                  io.to(roomId).emit("room_state", room.getStateDTO());
+                  io.to(roomId).emit("user_list_update", room.getUserList());
+                  successCount++;
+                } else {
+                  console.log(
+                    `DB Load returned false (used defaults or failed) for room '${roomId}'.`
+                  );
+                  failCount++; // Count as failed if it didn't load existing state
+                }
+              } catch (loadErr) {
+                console.error(
+                  `Error during DB Load for room ${roomId}:`,
+                  loadErr
+                );
+                failCount++;
+              }
             } else {
+              console.warn(
+                `Room ${roomId} cannot be loaded (invalid instance or method missing).`
+              );
               failCount++;
             }
-          });
+          }
           console.log(
-            `Reload complete. ${successCount} succeeded, ${failCount} failed.`
+            `DB Reload complete. ${successCount} succeeded, ${failCount} failed.`
           );
-          // Reload global state? Be careful with nextId
+
+          // Reload global state from file (unchanged logic)
           try {
-            const saveDir = require("path").resolve(
+            const loadSaveDir = path.resolve(
               __dirname,
-              "..",
-              require("./lib/config").SERVER_CONFIG.DEFAULT_SAVE_DIR
-            );
-            const globalStateData = require("fs").readFileSync(
-              require("path").join(saveDir, "global_state.json"),
-              "utf8"
-            );
-            const globalState = JSON.parse(globalStateData);
-            // Careful: Only update nextId if it makes sense (e.g., higher than current)
-            const currentNextId =
-              require("./lib/game_objects").ServerGameObject.nextId;
-            const loadedNextId = globalState.nextId || 0;
-            if (loadedNextId > currentNextId) {
-              console.log(
-                `Updating global nextId from ${currentNextId} to loaded value ${loadedNextId}.`
-              );
-              require("./lib/game_objects").ServerGameObject.nextId =
-                loadedNextId;
+              SERVER_CONFIG.DEFAULT_SAVE_DIR
+            ); // Adjusted path
+            const globalStatePath = path.join(loadSaveDir, "global_state.json");
+            if (fs.existsSync(globalStatePath)) {
+              const globalStateData = fs.readFileSync(globalStatePath, "utf8");
+              const globalState = JSON.parse(globalStateData);
+              const currentNextId = ServerGameObject.nextId; // Use imported class static property
+              const loadedNextId = globalState.nextId || 0;
+              if (loadedNextId > currentNextId) {
+                console.log(
+                  `Updating global nextId from ${currentNextId} to loaded value ${loadedNextId}.`
+                );
+                ServerGameObject.nextId = loadedNextId;
+              } else {
+                console.log(
+                  `Loaded nextId (${loadedNextId}) from file is not greater than current (${currentNextId}). Keeping current.`
+                );
+              }
             } else {
-              console.log(
-                `Loaded nextId (${loadedNextId}) is not greater than current (${currentNextId}). Keeping current.`
+              console.warn(
+                "Global state file not found during load, cannot update nextId from file."
               );
             }
           } catch (e) {
             console.warn(
-              "Could not load or parse global_state.json for nextId."
+              "Could not load or parse global_state.json for nextId during reload:",
+              e
             );
           }
         } else {
           const roomToLoad = rooms.get(loadTarget);
-          if (roomToLoad) {
+          if (roomToLoad && typeof roomToLoad.loadStateFromDB === "function") {
             console.log(`Reloading state for room: ${loadTarget}...`);
-            if (roomToLoad.loadStateFromFile()) {
-              // Force clients in that room to get the new state
-              io.to(loadTarget).emit("room_state", roomToLoad.getStateDTO());
-              io.to(loadTarget).emit(
-                "user_list_update",
-                roomToLoad.getUserList()
+            try {
+              if (await roomToLoad.loadStateFromDB()) {
+                // await the load
+                io.to(loadTarget).emit("room_state", roomToLoad.getStateDTO());
+                io.to(loadTarget).emit(
+                  "user_list_update",
+                  roomToLoad.getUserList()
+                );
+                console.log(
+                  `Room '${loadTarget}' reloaded from DB successfully.`
+                );
+              } else {
+                console.log(
+                  `DB Load returned false (used defaults or failed) for room '${loadTarget}'.`
+                );
+              }
+            } catch (loadErr) {
+              console.error(
+                `Error during DB Load for room ${loadTarget}:`,
+                loadErr
               );
-            } else {
-              console.log(`Load failed for room '${loadTarget}'.`);
             }
           } else {
-            console.log(`Error: Room '${loadTarget}' not found.`);
+            console.log(
+              `Error: Room '${loadTarget}' not found or cannot be loaded.`
+            );
           }
         }
         break;
+
+      // --- NEW DEBUG COMMAND ---
+      case "debuguser":
+        if (params.length !== 1) {
+          console.log("Usage: debuguser <username>");
+          break;
+        }
+        const targetUsername = params[0];
+        const lowerTargetUsername = targetUsername.toLowerCase();
+
+        console.log(`--- Debugging User: ${targetUsername} ---`);
+
+        // --- 1. Fetch from Database ---
+        let dbUserData = null;
+        try {
+          // Use the correctly imported User model
+          dbUserData = await User.findOne({
+            username: lowerTargetUsername,
+          }).lean(); // Use lean for plain object
+          if (dbUserData) {
+            console.log("  Database State:");
+            console.log(`    _id: ${dbUserData._id}`);
+            console.log(`    Username: ${dbUserData.username}`);
+            console.log(`    Last Room: ${dbUserData.lastRoomId}`);
+            console.log(
+              `    Last Coords: (${dbUserData.lastX}, ${
+                dbUserData.lastY
+              }, Z:${dbUserData.lastZ?.toFixed(2)})`
+            );
+            console.log(`    Currency: ${dbUserData.currency}`);
+            console.log(`    Body Color: ${dbUserData.bodyColor}`);
+            // Check walkability of DB coords in the DB lastRoomId
+            const dbLastRoom = rooms.get(dbUserData.lastRoomId);
+            if (dbLastRoom) {
+              const isDbCoordsWalkable = dbLastRoom.isWalkable(
+                dbUserData.lastX,
+                dbUserData.lastY
+              );
+              console.log(
+                `    DB Coords Walkable in '${dbUserData.lastRoomId}': ${
+                  isDbCoordsWalkable ? "Yes" : "No"
+                }`
+              );
+            } else {
+              console.log(
+                `    Cannot check walkability: Room '${dbUserData.lastRoomId}' not currently loaded.`
+              );
+            }
+          } else {
+            console.log(
+              `  Database State: User '${targetUsername}' not found in DB.`
+            );
+          }
+        } catch (dbError) {
+          console.error(
+            `  Database Error fetching user '${targetUsername}':`,
+            dbError
+          );
+        }
+
+        // --- 2. Fetch from Live Game State ---
+        const { avatar: liveAvatar, room: liveRoom } =
+          findAvatarGlobally(targetUsername);
+
+        if (liveAvatar && liveRoom) {
+          console.log("  Live Game State:");
+          console.log(`    Avatar ID: ${liveAvatar.id}`);
+          console.log(`    Socket ID: ${liveAvatar.socketId}`);
+          console.log(
+            `    Current Room: ${liveAvatar.roomId} (Instance: ${liveRoom.id})`
+          ); // Show both for consistency check
+          console.log(
+            `    Current Coords: (${liveAvatar.x.toFixed(
+              2
+            )}, ${liveAvatar.y.toFixed(2)}, Z:${liveAvatar.z.toFixed(2)})`
+          );
+          console.log(`    State: ${liveAvatar.state}`);
+          console.log(`    Direction: ${liveAvatar.direction}`);
+          console.log(`    Currency: ${liveAvatar.currency}`);
+          console.log(`    Body Color: ${liveAvatar.bodyColor}`);
+          console.log(
+            `    Sitting On: ${liveAvatar.sittingOnFurniId || "None"}`
+          );
+          console.log(`    Path Length: ${liveAvatar.path?.length || 0}`);
+          console.log(
+            `    Action After Path: ${
+              liveAvatar.actionAfterPath
+                ? JSON.stringify(liveAvatar.actionAfterPath)
+                : "None"
+            }`
+          );
+        } else {
+          console.log(
+            `  Live Game State: Avatar '${targetUsername}' not currently online.`
+          );
+        }
+
+        // --- 3. Comparison (if both found) ---
+        if (dbUserData && liveAvatar) {
+          console.log("  Comparison:");
+          if (dbUserData.lastRoomId !== liveAvatar.roomId) {
+            console.warn(
+              `    ROOM MISMATCH: DB (${dbUserData.lastRoomId}) vs Live (${liveAvatar.roomId})`
+            );
+          }
+          const dbX = dbUserData.lastX;
+          const dbY = dbUserData.lastY;
+          const liveX = Math.round(liveAvatar.x); // Compare rounded live coords
+          const liveY = Math.round(liveAvatar.y);
+          if (dbX !== liveX || dbY !== liveY) {
+            console.warn(
+              `    COORDS MISMATCH: DB (${dbX},${dbY}) vs Live (~${liveX},${liveY})`
+            );
+          } else {
+            console.log(
+              `    Coords Match (Rounded): DB (${dbX},${dbY}) vs Live (~${liveX},${liveY})`
+            );
+          }
+          if (dbUserData.currency !== liveAvatar.currency) {
+            console.warn(
+              `    CURRENCY MISMATCH: DB (${dbUserData.currency}) vs Live (${liveAvatar.currency})`
+            );
+          }
+        }
+        console.log(`--- End Debug User: ${targetUsername} ---`);
+        break;
+      // --- END DEBUG COMMAND ---
 
       case "stop":
       case "exit":
         console.log("Initiating server shutdown via console command...");
         if (shutdownCallback) {
-          shutdownCallback(); // Call the shutdown function passed during init
+          // No await needed here, shutdown handles its own process exit
+          shutdownCallback();
         } else {
           console.error(
             "Shutdown callback not configured. Cannot shut down gracefully."
@@ -547,10 +769,9 @@ function handleConsoleInput(input) {
         );
     }
   } catch (cmdError) {
-    // Catch errors during command processing to prevent crashing the console
     console.error(`Error executing command '${command}':`, cmdError.message);
-    console.error(cmdError.stack); // Log stack for debugging
+    // console.error(cmdError.stack); // Optional: log full stack
   }
-}
+} // End handleConsoleInput
 
 module.exports = { initializeConsole };
