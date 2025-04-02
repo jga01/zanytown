@@ -179,7 +179,6 @@ async function handleConnection(socket) {
     spawnPoint.x,
     spawnPoint.y,
     userData.username || `User_${socket.id.substring(0, 4)}`,
-    null, // Explicitly pass null for persistentId -> triggers runtime ID
     socket.id
   );
   // Apply loaded data

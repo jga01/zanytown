@@ -465,26 +465,6 @@ async function handleConsoleInput(input) {
           console.log(
             `DB Save complete. ${successCount} succeeded, ${failCount} failed.`
           );
-
-          // Also save global state like nextId to file
-          const saveDir = path.resolve(
-            __dirname,
-            SERVER_CONFIG.DEFAULT_SAVE_DIR
-          ); // Adjusted path assuming console is in root
-          const globalState = { nextId: ServerGameObject.nextId }; // Use the imported class static property
-          try {
-            if (!fs.existsSync(saveDir))
-              fs.mkdirSync(saveDir, { recursive: true });
-            fs.writeFileSync(
-              path.join(saveDir, "global_state.json"),
-              JSON.stringify(globalState, null, 2)
-            );
-            console.log(
-              `Global state (nextId: ${globalState.nextId}) saved to file.`
-            );
-          } catch (e) {
-            console.error("Error saving global state to file:", e);
-          }
         } else {
           const roomToSave = rooms.get(saveTarget);
           if (roomToSave && typeof roomToSave.saveStateToDB === "function") {
@@ -555,40 +535,6 @@ async function handleConsoleInput(input) {
           console.log(
             `DB Reload complete. ${successCount} succeeded, ${failCount} failed.`
           );
-
-          // Reload global state from file (unchanged logic)
-          try {
-            const loadSaveDir = path.resolve(
-              __dirname,
-              SERVER_CONFIG.DEFAULT_SAVE_DIR
-            ); // Adjusted path
-            const globalStatePath = path.join(loadSaveDir, "global_state.json");
-            if (fs.existsSync(globalStatePath)) {
-              const globalStateData = fs.readFileSync(globalStatePath, "utf8");
-              const globalState = JSON.parse(globalStateData);
-              const currentNextId = ServerGameObject.nextId; // Use imported class static property
-              const loadedNextId = globalState.nextId || 0;
-              if (loadedNextId > currentNextId) {
-                console.log(
-                  `Updating global nextId from ${currentNextId} to loaded value ${loadedNextId}.`
-                );
-                ServerGameObject.nextId = loadedNextId;
-              } else {
-                console.log(
-                  `Loaded nextId (${loadedNextId}) from file is not greater than current (${currentNextId}). Keeping current.`
-                );
-              }
-            } else {
-              console.warn(
-                "Global state file not found during load, cannot update nextId from file."
-              );
-            }
-          } catch (e) {
-            console.warn(
-              "Could not load or parse global_state.json for nextId during reload:",
-              e
-            );
-          }
         } else {
           const roomToLoad = rooms.get(loadTarget);
           if (roomToLoad && typeof roomToLoad.loadStateFromDB === "function") {

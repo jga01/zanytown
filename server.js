@@ -219,12 +219,6 @@ async function startServer() {
 
     // 2. Initialization and Room Loading from DB
     console.log("Initializing Server Rooms from Database/Defaults...");
-    // Ensure save directory exists (though mainly for potential future use now)
-    const saveDir = path.resolve(__dirname, SERVER_CONFIG.DEFAULT_SAVE_DIR);
-    if (!fs.existsSync(saveDir)) {
-      console.log(`Creating save directory: ${saveDir}`);
-      fs.mkdirSync(saveDir, { recursive: true });
-    }
 
     // Load initial rooms defined in config
     for (const roomId of SERVER_CONFIG.INITIAL_ROOMS) {
