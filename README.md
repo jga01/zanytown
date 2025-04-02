@@ -147,16 +147,3 @@ These instructions will get you a copy of the project up and running on your loc
 ## License
 
 Copyright © 2025 Tiago Goossen de Andrade. All rights reserved.
-
-```
-
-**Remember to:**
-
-1.  **Replace Placeholders:**
-    *   Add a cool screenshot or GIF at the top.
-    *   Update the `git clone` URL with your actual repository URL.
-    *   Choose and add a `LICENSE` file if you haven't already.
-2.  **Verify `package.json` Scripts:** Ensure the `npm start` command works, or provide the correct command (e.g., `node server.js`).
-3.  **Create `.env.example`:** It's good practice to have an `.env.example` file showing the required variables, excluding the actual secrets.
-4.  **Add Sounds:** Make sure the sound files referenced in `client.js` (e.g., `sounds/step.wav`, `sounds/place.mp3`) actually exist in the `public/sounds/` directory.
-5.  **Review and Customize:** Read through the generated README and adjust any details to better fit your project's specifics or future plans.
