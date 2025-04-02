@@ -3,7 +3,8 @@
 const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config");
 const { ServerAvatar, ServerFurniture } = require("./lib/game_objects");
 const { rotateDirection } = require("./lib/utils");
-const Furniture = require("./models/furniture"); // <-- Import the Furniture model
+const Furniture = require("./models/furniture");
+const { findAvatarGlobally } = require("./server_console");
 
 // --- Globals passed from server.js ---
 let rooms; // Map<roomId, ServerRoom>
@@ -114,6 +115,7 @@ async function handleConnection(socket) {
     avatarId: null,
     userId: socket.userId,
   };
+  socket.isAdmin = false;
 
   let userData;
   try {
@@ -123,6 +125,11 @@ async function handleConnection(socket) {
     userData = await findUserById(socket.userId); // Fetch user data
     if (!userData)
       throw new Error(`User data not found for ID: ${socket.userId}`);
+
+    socket.isAdmin = userData.isAdmin || false;
+    console.log(
+      ` -> User ${userData.username} isAdmin status: ${socket.isAdmin}`
+    );
   } catch (err) {
     console.error(
       `Failed to load user data for: ${socket.userId}:`,
@@ -182,6 +189,7 @@ async function handleConnection(socket) {
     socket.id
   );
   // Apply loaded data
+  newAvatar.isAdmin = socket.isAdmin;
   newAvatar.currency = userData.currency ?? SHARED_CONFIG.DEFAULT_CURRENCY;
   newAvatar.inventory = new Map(Object.entries(userData.inventory || {}));
   newAvatar.bodyColor = userData.bodyColor || "#6CA0DC";
@@ -327,6 +335,48 @@ function handleSendChat(socket, message) {
 
     let updateNeeded = false; // Did the command change avatar state/appearance?
     let broadcastUpdate = true; // Should the update be broadcast?
+    let isAdminCommand = false;
+
+    switch (command) {
+      case "kick":
+      case "give":
+      case "givegold":
+      case "teleport":
+      case "announce":
+        isAdminCommand = true;
+        if (!socket.isAdmin) {
+          socket.emit("action_failed", {
+            action: "command",
+            reason: "Admin permission required.",
+          });
+          return; // Exit early if non admin
+        }
+        break;
+      case "admin": // Example: /admin <message>
+        if (!socket.isAdmin) {
+          socket.emit("action_failed", {
+            action: "command",
+            reason: "Admin permission required.",
+          });
+          return;
+        }
+        if (args.length > 0) {
+          const adminMsg = args.join(" ");
+          io.emit("chat_message", {
+            avatarId: null,
+            avatarName: "Admin", // Special name
+            text: `[${avatar.name}]: ${adminMsg}`,
+            className: "admin-msg", // Special class for styling
+          });
+          console.log(`Admin ${avatar.name} broadcast: ${adminMsg}`);
+        } else {
+          socket.emit("action_failed", {
+            action: "command",
+            reason: "Usage: /admin <message>",
+          });
+        }
+        return;
+    }
 
     switch (command) {
       case "wave":
@@ -408,12 +458,264 @@ function handleSendChat(socket, message) {
         updateNeeded = false;
         broadcastUpdate = false;
         break;
-      default:
-        socket.emit("action_failed", {
-          action: "command",
-          reason: `Unknown command: /${command}`,
-        });
-        broadcastUpdate = false; // Don't broadcast for unknown commands
+      case "kick":
+        if (args.length === 1) {
+          const targetNameKick = args[0];
+          const { avatar: targetAvatarKick } =
+            findAvatarGlobally(targetNameKick); // Use global find
+          if (targetAvatarKick && clients[targetAvatarKick.socketId]) {
+            if (targetAvatarKick.isAdmin && !socket.isAdmin) {
+              // Optional: Prevent non-admins kicking admins
+              socket.emit("action_failed", {
+                action: "kick",
+                reason: "Cannot kick an administrator.",
+              });
+              break;
+            }
+            console.log(
+              `ADMIN ACTION: ${avatar.name} kicking user ${targetAvatarKick.name} (Room: ${targetAvatarKick.roomId}, Socket: ${targetAvatarKick.socketId})...`
+            );
+            clients[targetAvatarKick.socketId].socket.emit(
+              "force_disconnect",
+              `Kicked by admin ${avatar.name}`
+            );
+            clients[targetAvatarKick.socketId].socket.disconnect(true);
+            io.emit("chat_message", {
+              avatarName: "Server",
+              text: `${targetAvatarKick.name} was kicked by ${avatar.name}.`,
+              className: "server-msg",
+            });
+          } else {
+            socket.emit("action_failed", {
+              action: "kick",
+              reason: `User '${targetNameKick}' not found online.`,
+            });
+          }
+        } else {
+          socket.emit("action_failed", {
+            action: "kick",
+            reason: "Usage: /kick <username>",
+          });
+        }
+        break;
+      case "teleport": // ADMIN ONLY (Checked above)
+        if (args.length >= 3) {
+          // Allow <user> <x> <y> OR <user> <room> <x> <y>
+          const targetNameTp = args[0];
+          let destRoomIdTp = room.id; // Default to current room
+          let targetXTp, targetYTp;
+
+          if (args.length === 3) {
+            // <user> <x> <y>
+            targetXTp = parseInt(args[1], 10);
+            targetYTp = parseInt(args[2], 10);
+          } else {
+            // <user> <room> <x> <y>
+            destRoomIdTp = args[1];
+            targetXTp = parseInt(args[2], 10);
+            targetYTp = parseInt(args[3], 10);
+          }
+
+          const { avatar: targetAvatarTp } = findAvatarGlobally(targetNameTp);
+          const destRoomTp = rooms.get(destRoomIdTp);
+
+          if (!targetAvatarTp) {
+            socket.emit("action_failed", {
+              action: "teleport",
+              reason: `User '${targetNameTp}' not found.`,
+            });
+          } else if (!destRoomTp) {
+            socket.emit("action_failed", {
+              action: "teleport",
+              reason: `Destination room '${destRoomIdTp}' not found.`,
+            });
+          } else if (isNaN(targetXTp) || isNaN(targetYTp)) {
+            socket.emit("action_failed", {
+              action: "teleport",
+              reason: `Invalid coordinates '${args[args.length - 2]}, ${
+                args[args.length - 1]
+              }'.`,
+            });
+          } else {
+            // Validate target tile in destination room IS VALID TERRAIN
+            if (destRoomTp.isValidTile(targetXTp, targetYTp)) {
+              console.log(
+                `ADMIN ACTION: ${avatar.name} teleporting ${targetAvatarTp.name} from ${targetAvatarTp.roomId} to ${destRoomIdTp}(${targetXTp}, ${targetYTp})...`
+              );
+              const targetSocket = clients[targetAvatarTp.socketId]?.socket;
+              if (targetSocket && typeof handleChangeRoom === "function") {
+                handleChangeRoom(targetSocket, {
+                  targetRoomId: destRoomIdTp,
+                  targetX: targetXTp,
+                  targetY: targetYTp,
+                });
+                socket.emit("chat_message", {
+                  avatarName: "Server",
+                  text: `Teleported ${targetAvatarTp.name} to ${destRoomIdTp}(${targetXTp}, ${targetYTp}).`,
+                  className: "info-msg",
+                });
+              } else {
+                socket.emit("action_failed", {
+                  action: "teleport",
+                  reason: `Cannot teleport: Socket for ${targetNameTp} not found or internal error.`,
+                });
+              }
+            } else {
+              socket.emit("action_failed", {
+                action: "teleport",
+                reason: `Cannot teleport: Target tile (${targetXTp}, ${targetYTp}) in room ${destRoomIdTp} is invalid terrain.`,
+              });
+            }
+          }
+        } else {
+          socket.emit("action_failed", {
+            action: "teleport",
+            reason: "Usage: /teleport <user> [room] <x> <y>",
+          });
+        }
+        break;
+      case "give": // ADMIN ONLY (Checked above)
+        if (args.length >= 2) {
+          const targetNameGive = args[0];
+          const itemIdGive = args[1];
+          const quantityGive = args[2] ? parseInt(args[2], 10) : 1;
+
+          const { avatar: targetAvatarGive } =
+            findAvatarGlobally(targetNameGive);
+
+          if (!targetAvatarGive) {
+            socket.emit("action_failed", {
+              action: "give",
+              reason: `User '${targetNameGive}' not found.`,
+            });
+          } else if (isNaN(quantityGive) || quantityGive <= 0) {
+            socket.emit("action_failed", {
+              action: "give",
+              reason: `Invalid quantity '${args[2]}'. Must be positive.`,
+            });
+          } else {
+            const definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+              (def) => def.id === itemIdGive
+            );
+            if (!definition) {
+              socket.emit("action_failed", {
+                action: "give",
+                reason: `Invalid item ID '${itemIdGive}'.`,
+              });
+            } else if (targetAvatarGive.addItem(itemIdGive, quantityGive)) {
+              console.log(
+                `ADMIN ACTION: ${avatar.name} gave ${quantityGive}x ${definition.name} to ${targetAvatarGive.name}.`
+              );
+              socket.emit("chat_message", {
+                avatarName: "Server",
+                text: `Gave ${quantityGive}x ${definition.name} to ${targetAvatarGive.name}.`,
+                className: "info-msg",
+              });
+              const targetSock = clients[targetAvatarGive.socketId]?.socket;
+              if (targetSock) {
+                targetSock.emit(
+                  "inventory_update",
+                  targetAvatarGive.getInventoryDTO()
+                );
+                targetSock.emit("chat_message", {
+                  avatarName: "Server",
+                  text: `Admin ${avatar.name} gave you ${quantityGive}x ${definition.name}!`,
+                  className: "server-msg",
+                });
+              }
+            } else {
+              socket.emit("action_failed", {
+                action: "give",
+                reason: `Failed to give item (internal error?).`,
+              });
+            }
+          }
+        } else {
+          socket.emit("action_failed", {
+            action: "give",
+            reason: "Usage: /give <user> <item_id> [quantity]",
+          });
+        }
+        break;
+      case "givegold": // ADMIN ONLY (Checked above)
+        if (args.length === 2) {
+          const targetNameGold = args[0];
+          const amountGold = parseInt(args[1], 10);
+
+          const { avatar: targetAvatarGold } =
+            findAvatarGlobally(targetNameGold);
+
+          if (!targetAvatarGold) {
+            socket.emit("action_failed", {
+              action: "givegold",
+              reason: `User '${targetNameGold}' not found.`,
+            });
+          } else if (isNaN(amountGold) || amountGold <= 0) {
+            socket.emit("action_failed", {
+              action: "givegold",
+              reason: `Invalid amount '${args[1]}'. Must be positive.`,
+            });
+          } else if (targetAvatarGold.addCurrency(amountGold)) {
+            console.log(
+              `ADMIN ACTION: ${avatar.name} gave ${amountGold} Gold to ${targetAvatarGold.name}.`
+            );
+            socket.emit("chat_message", {
+              avatarName: "Server",
+              text: `Gave ${amountGold} Gold to ${targetAvatarGold.name}.`,
+              className: "info-msg",
+            });
+            const targetSock = clients[targetAvatarGold.socketId]?.socket;
+            if (targetSock) {
+              targetSock.emit("currency_update", {
+                currency: targetAvatarGold.currency,
+              });
+              targetSock.emit("chat_message", {
+                avatarName: "Server",
+                text: `Admin ${avatar.name} gave you ${amountGold} Gold!`,
+                className: "server-msg",
+              });
+            }
+          } else {
+            socket.emit("action_failed", {
+              action: "givegold",
+              reason: `Failed to give gold (internal error?).`,
+            });
+          }
+        } else {
+          socket.emit("action_failed", {
+            action: "givegold",
+            reason: "Usage: /givegold <user> <amount>",
+          });
+        }
+        break;
+      case "announce": // ADMIN ONLY (Checked above)
+        if (args.length > 0) {
+          const announceMsg = args.join(" ");
+          console.log(`ADMIN ACTION: ${avatar.name} announced: ${announceMsg}`);
+          io.emit("chat_message", {
+            avatarId: null,
+            avatarName: "Announcement", // Special name
+            text: announceMsg,
+            className: "announcement-msg", // Special class for styling
+          });
+        } else {
+          socket.emit("action_failed", {
+            action: "announce",
+            reason: "Usage: /announce <message>",
+          });
+        }
+        break;
+      // --- End admin-checked commands ---
+
+      default: // Command exists but wasn't handled (or requires admin and check failed)
+        if (!isAdminCommand) {
+          // Only show unknown if it wasn't an admin command they lacked permission for
+          socket.emit("action_failed", {
+            action: "command",
+            reason: `Unknown command: /${command}`,
+          });
+          broadcastUpdate = false;
+        }
     }
     // Broadcast avatar update TO THE ROOM if needed
     if (updateNeeded && broadcastUpdate) {

@@ -150,6 +150,12 @@ async function handleConsoleInput(input) {
           "  load <room_id|all>           - Load specific room state (DB) or all rooms (Warning: Disruptive)."
         );
         console.log(
+          "  setadmin <username>            - Grant admin privileges to a user."
+        );
+        console.log(
+          "  removeadmin <username>         - Revoke admin privileges from a user."
+        );
+        console.log(
           "  debuguser <username>         - Show DB vs Live state for a user."
         ); // Added help entry
         console.log(
@@ -569,6 +575,106 @@ async function handleConsoleInput(input) {
         }
         break;
 
+      case "setadmin":
+        if (params.length === 1) {
+          const usernameToAdmin = params[0].toLowerCase();
+          try {
+            const result = await User.updateOne(
+              { username: usernameToAdmin },
+              { $set: { isAdmin: true } }
+            );
+            if (result.matchedCount === 0) {
+              console.log(`Error: User '${params[0]}' not found in database.`);
+            } else if (result.modifiedCount === 0) {
+              console.log(`User '${params[0]}' is already an admin.`);
+            } else {
+              console.log(
+                `Success: Granted admin privileges to '${params[0]}'.`
+              );
+              // --- Update live status if user is online ---
+              const { avatar: liveAdminAvatar } = findAvatarGlobally(params[0]);
+              if (liveAdminAvatar && clients[liveAdminAvatar.socketId]) {
+                const adminSocket = clients[liveAdminAvatar.socketId].socket;
+                adminSocket.isAdmin = true; // Update live socket status
+                liveAdminAvatar.isAdmin = true; // Update live avatar status
+                // Notify the user and broadcast potential visual update
+                adminSocket.emit("chat_message", {
+                  avatarName: "Server",
+                  text: "You have been granted admin privileges.",
+                  className: "server-msg",
+                });
+                io.to(liveAdminAvatar.roomId).emit(
+                  "avatar_update",
+                  liveAdminAvatar.toDTO()
+                ); // Send updated DTO
+                console.log(
+                  ` -> Updated live admin status for ${liveAdminAvatar.name}.`
+                );
+              }
+              // --- End Live Update ---
+            }
+          } catch (dbError) {
+            console.error(
+              `Database error setting admin for '${params[0]}':`,
+              dbError
+            );
+          }
+        } else {
+          console.log("Usage: setadmin <username>");
+        }
+        break;
+
+      case "removeadmin":
+        if (params.length === 1) {
+          const usernameToRemoveAdmin = params[0].toLowerCase();
+          try {
+            const result = await User.updateOne(
+              { username: usernameToRemoveAdmin },
+              { $set: { isAdmin: false } }
+            );
+            if (result.matchedCount === 0) {
+              console.log(`Error: User '${params[0]}' not found in database.`);
+            } else if (result.modifiedCount === 0) {
+              console.log(`User '${params[0]}' is not currently an admin.`);
+            } else {
+              console.log(
+                `Success: Revoked admin privileges from '${params[0]}'.`
+              );
+              // --- Update live status if user is online ---
+              const { avatar: liveNonAdminAvatar } = findAvatarGlobally(
+                params[0]
+              );
+              if (liveNonAdminAvatar && clients[liveNonAdminAvatar.socketId]) {
+                const nonAdminSocket =
+                  clients[liveNonAdminAvatar.socketId].socket;
+                nonAdminSocket.isAdmin = false; // Update live socket status
+                liveNonAdminAvatar.isAdmin = false; // Update live avatar status
+                nonAdminSocket.emit("chat_message", {
+                  avatarName: "Server",
+                  text: "Your admin privileges have been revoked.",
+                  className: "server-msg",
+                });
+                io.to(liveNonAdminAvatar.roomId).emit(
+                  "avatar_update",
+                  liveNonAdminAvatar.toDTO()
+                ); // Send updated DTO
+                console.log(
+                  ` -> Updated live admin status for ${liveNonAdminAvatar.name}.`
+                );
+              }
+              // --- End Live Update ---
+            }
+          } catch (dbError) {
+            console.error(
+              `Database error removing admin for '${params[0]}':`,
+              dbError
+            );
+          }
+        } else {
+          console.log("Usage: removeadmin <username>");
+        }
+        break;
+
       // --- NEW DEBUG COMMAND ---
       case "debuguser":
         if (params.length !== 1) {
@@ -720,4 +826,4 @@ async function handleConsoleInput(input) {
   }
 } // End handleConsoleInput
 
-module.exports = { initializeConsole };
+module.exports = { initializeConsole, findAvatarGlobally };

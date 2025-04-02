@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login / Register - Iso MMO</title>
+    <!-- Link to your existing stylesheet or create a new one -->
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      /* Basic styles specific to login page */
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background-color: #282c34; /* Dark background */
+        color: #ffffff;
+      }
+      .auth-container {
+        background-color: #3a3f4a;
+        padding: 30px 40px;
+        border-radius: 8px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        width: 350px;
+        text-align: center;
+      }
+      .auth-container h2 {
+        margin-bottom: 25px;
+        color: #61dafb; /* Light blue */
+      }
+      .auth-form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+      .auth-form input {
+        padding: 12px 15px;
+        border: 1px solid #555;
+        background-color: #282c34;
+        color: #fff;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      .auth-form input:focus {
+        outline: none;
+        border-color: #61dafb;
+      }
+      .auth-form button {
+        padding: 12px;
+        background-color: #61dafb;
+        color: #282c34;
+        border: none;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+        font-size: 16px;
+      }
+      .auth-form button:hover {
+        background-color: #7ae6ff;
+      }
+      .error-message {
+        color: #ff6b6b; /* Red for errors */
+        margin-top: 10px;
+        min-height: 1.2em; /* Reserve space to prevent layout jumps */
+        font-size: 13px;
+        text-align: left;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid #555;
+        margin: 25px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="auth-container">
+      <!-- Login Form -->
+      <h2>Login</h2>
+      <form id="login-form" class="auth-form">
+        <input
+          type="text"
+          id="login-username"
+          placeholder="Username"
+          required
+          autocomplete="username"
+        />
+        <input
+          type="password"
+          id="login-password"
+          placeholder="Password"
+          required
+          autocomplete="current-password"
+        />
+        <button type="submit">Login</button>
+        <div id="login-error" class="error-message"></div>
+      </form>
+
+      <hr />
+
+      <!-- Registration Form -->
+      <h2>Register</h2>
+      <form id="register-form" class="auth-form">
+        <input
+          type="text"
+          id="register-username"
+          placeholder="Choose Username"
+          required
+          autocomplete="username"
+        />
+        <input
+          type="password"
+          id="register-password"
+          placeholder="Choose Password (min 6 chars)"
+          required
+          autocomplete="new-password"
+        />
+        <!-- Optional: Confirm Password -->
+        <!-- <input type="password" id="register-confirm-password" placeholder="Confirm Password" required autocomplete="new-password"> -->
+        <button type="submit">Register</button>
+        <div id="register-error" class="error-message"></div>
+        <div
+          id="register-success"
+          class="error-message"
+          style="color: #98fb98"
+        ></div>
+        <!-- Green for success -->
+      </form>
+    </div>
+
+    <!-- Link the JavaScript logic file -->
+    <script src="js/auth.js"></script>
+  </body>
+</html>

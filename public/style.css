@@ -1,0 +1,551 @@
+body {
+    margin: 0;
+    font-family: Verdana, Geneva, Tahoma, sans-serif;
+    background-color: #333;
+    color: #eee;
+    overflow: hidden; /* Prevents scrollbars on the body */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-size: 14px;
+}
+
+#game-container {
+    position: relative; /* Crucial for absolute positioning of child UI panels */
+    width: 900px;
+    height: 650px;
+    background-color: #222;
+    border: 2px solid #555;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+    overflow: hidden; /* Clip contents */
+    cursor: grab; /* Default cursor indicating pannable map */
+}
+
+#gameCanvas {
+    display: block;
+    background-color: #003366; /* Dark blue background rendered behind tiles */
+    width: 100%;
+    height: 100%;
+}
+
+/* --- UI Panel Base --- */
+.ui-panel {
+    position: absolute;
+    background-color: rgba(20, 20, 30, 0.85);
+    border: 1px solid #778899;
+    border-radius: 6px;
+    padding: 10px;
+    color: #e0e0e0;
+    font-size: 12px;
+    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4);
+    box-sizing: border-box;
+    z-index: 10; /* Above canvas, below bubbles/profile */
+}
+
+/* --- Debug Panel --- */
+#coords-debug {
+    bottom: 10px;
+    left: 10px;
+    width: 280px;
+    height: 110px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.3;
+    background-color: rgba(0, 0, 0, 0.7);
+    border-color: #444;
+    padding: 8px;
+}
+
+/* --- Chat Area --- */
+#chat-area {
+    bottom: 10px;
+    right: 10px;
+    width: 320px;
+    height: 160px;
+    display: flex;
+    flex-direction: column;
+}
+
+#chat-log {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 8px;
+    border: 1px solid #555;
+    padding: 6px;
+    background-color: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: #666 #333; /* Firefox */
+}
+
+/* Webkit scrollbar styling */
+#chat-log::-webkit-scrollbar { width: 8px; }
+#chat-log::-webkit-scrollbar-track { background: #333; border-radius: 4px; }
+#chat-log::-webkit-scrollbar-thumb { background-color: #666; border-radius: 4px; border: 1px solid #333; }
+
+#chat-log p {
+    margin: 3px 0;
+    line-height: 1.3;
+    word-wrap: break-word;
+    font-size: 13px;
+    color: #E0E0E0;
+}
+
+/* Specific message type styles */
+#chat-log p.info-msg { color: #87CEEB; font-style: italic; }
+#chat-log p.error-msg { color: #FF6347; font-weight: bold; }
+#chat-log p.server-msg { color: #FFD700; font-weight: bold; }
+#chat-log p.self-msg { color: #90EE90; font-weight: bold; }
+
+#chat-input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #778899;
+    background-color: #2a2a3a;
+    color: #fff;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 13px;
+}
+#chat-input:focus { outline: none; border-color: #aaa; }
+
+/* --- Inventory Panel --- */
+#inventory-panel {
+    top: 10px;
+    right: 10px;
+    width: 200px;
+    max-height: calc(60% - 20px); /* Example max height */
+    display: flex;
+    flex-direction: column;
+}
+
+#inventory-panel h4 { margin: 0 0 8px 0; text-align: center; color: #ccc; flex-shrink: 0; }
+
+#inventory-items {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex-grow: 1;
+    overflow-y: auto; /* Scroll *within* the items list */
+    padding-right: 4px;
+    padding-bottom: 5px;
+    scrollbar-width: thin;
+    scrollbar-color: #667 #344;
+}
+#inventory-items::-webkit-scrollbar { width: 6px; }
+#inventory-items::-webkit-scrollbar-track { background: #344; border-radius: 3px; }
+#inventory-items::-webkit-scrollbar-thumb { background-color: #667; border-radius: 3px; }
+
+.inventory-item {
+    padding: 5px 8px;
+    border: 1px solid #667;
+    border-radius: 4px;
+    cursor: pointer;
+    background-color: rgba(70, 80, 90, 0.7);
+    display: flex;
+    align-items: center;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+    flex-shrink: 0;
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.inventory-item:hover { background-color: #5a6a7a; border-color: #99aabb; }
+.inventory-item.selected { /* Highlight when selected for placing */
+    border-color: #ffcc00;
+    background-color: #886600;
+    font-weight: bold;
+    color: #fff;
+    box-shadow: inset 0 0 5px rgba(255, 255, 0, 0.3);
+}
+
+.item-preview {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 1px solid #333;
+    margin-right: 8px;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.inventory-actions {
+    margin-top: 10px;
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+/* --- Room Controls & General Buttons --- */
+#room-controls { top: 10px; left: 10px; display: flex; gap: 5px; }
+
+button {
+    padding: 6px 10px;
+    background-color: #5a6a7a;
+    border: 1px solid #8899aa;
+    color: #e0e0e0;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 12px;
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    white-space: nowrap;
+}
+button:hover:not(:disabled) { background-color: #6a7a8a; border-color: #aabccd; }
+button:active:not(:disabled) { transform: scale(0.97); }
+button:disabled {
+    background-color: #444;
+    border-color: #666;
+    color: #888;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Specific Button Styles */
+#toggle-edit-btn { background-color: #4CAF50; border-color: #388E3C; color: white; }
+#toggle-edit-btn:hover:not(:disabled) { background-color: #66BB6A; }
+#toggle-edit-btn.active { /* Style when Edit Mode is ON */
+    background-color: #FF9800;
+    border-color: #F57C00;
+    color: black;
+}
+#toggle-edit-btn.active:hover:not(:disabled) { background-color: #FFA726; }
+
+#pickup-furni-btn { background-color: #aa0000; border-color: #770000; color: white; }
+#pickup-furni-btn:hover:not(:disabled) { background-color: #cc0000; }
+
+#recolor-furni-btn { background-color: #8A2BE2; border-color: #4B0082; color: white; }
+#recolor-furni-btn:hover:not(:disabled) { background-color: #9932CC; }
+#recolor-furni-btn[style*="display: none"] { display: none !important; } /* Ensures JS hide overrides */
+
+/* --- Chat Bubbles --- */
+#chat-bubbles-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Allows clicks to pass through */
+    overflow: hidden;
+    z-index: 100; /* Above most UI */
+}
+
+.chat-bubble {
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.9);
+    color: #111;
+    padding: 6px 10px;
+    border-radius: 12px;
+    border: 1px solid #aaa;
+    font-size: 13px;
+    max-width: 160px;
+    word-wrap: break-word;
+    text-align: center;
+    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+}
+.chat-bubble::after { /* Pointer */
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid rgba(255, 255, 255, 0.9);
+    filter: drop-shadow(0px 1px 1px rgba(0, 0, 0, 0.1));
+}
+
+/* --- Cursor Styles --- */
+.dragging { cursor: grabbing !important; }
+.edit-mode-cursor { cursor: crosshair !important; }
+/* Default cursor set on #game-container */
+
+/* --- User List Panel --- */
+#user-list-panel {
+    top: calc(10px + 32px + 10px); /* Approx: top-margin + button-height + gap */
+    left: 10px;
+    width: 160px;
+    max-height: 300px;
+    overflow-y: auto;
+    background-color: rgba(30, 40, 50, 0.8);
+}
+#user-list-panel h4 { margin: 0 0 8px 0; text-align: center; color: #b0c4de; }
+
+#user-list-content {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+    scrollbar-width: thin;
+    scrollbar-color: #667 #344;
+}
+#user-list-content::-webkit-scrollbar { width: 6px; }
+#user-list-content::-webkit-scrollbar-track { background: #344; border-radius: 3px; }
+#user-list-content::-webkit-scrollbar-thumb { background-color: #667; border-radius: 3px; }
+
+#user-list-content li {
+    padding: 4px 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+#user-list-content li:hover { background-color: rgba(255, 255, 255, 0.1); }
+#user-list-content li.self-user { font-weight: bold; color: #FFD700; background-color: rgba(80, 70, 30, 0.5); }
+#user-list-content li i { color: #888; } /* Loading/empty text */
+
+/* --- Profile Panel --- */
+#profile-panel {
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 280px;
+    background-color: rgba(50, 50, 70, 0.95);
+    border: 1px solid #8a8aaf;
+    z-index: 200; /* Above other UI */
+    padding: 15px;
+    display: none; /* Hidden by default */
+}
+#profile-panel h4 { margin: 0 0 12px 0; color: #FFD700; text-align: center; font-size: 16px; border-bottom: 1px solid #777; padding-bottom: 8px; }
+#profile-panel p { margin: 8px 0; font-size: 13px; display: flex; align-items: center; line-height: 1.4; }
+.profile-color-swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid black; margin-right: 8px; margin-left: 5px; vertical-align: middle; flex-shrink: 0; }
+.profile-actions { margin-top: 15px; text-align: center; }
+
+.close-btn { /* General style for close buttons */
+    position: absolute;
+    top: 8px; right: 8px;
+    background-color: #800;
+    color: white;
+    border: 1px solid #500;
+    border-radius: 50%;
+    width: 22px; height: 22px;
+    line-height: 20px; /* Center the X */
+    text-align: center;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 0;
+    transition: background-color 0.15s ease;
+}
+.close-btn:hover { background-color: #A00; }
+
+/* --- Currency Display --- */
+#player-currency {
+    position: absolute;
+    top: 5px;
+    left: 50%; transform: translateX(-50%);
+    background-color: rgba(10, 10, 20, 0.75);
+    color: #FFD700;
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    z-index: 15;
+    border: 1px solid #444;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    white-space: nowrap;
+}
+
+/* --- *** Start Recolor Panel *** --- */
+#recolor-panel {
+    top: 50%; right: 10px; transform: translateY(-50%); /* Example position */
+    width: 180px;
+    background-color: rgba(40, 40, 55, 0.92);
+    border: 1px solid #9999bb;
+    z-index: 150; /* Above most UI, below profile */
+    padding: 12px;
+    display: none; /* Hidden by default */
+    box-shadow: 3px 3px 8px rgba(0, 0, 0, 0.5);
+}
+#recolor-panel h4 { margin: 0 0 10px 0; text-align: center; color: #ddd; font-size: 14px; }
+#recolor-panel p { margin: 5px 0 10px 0; font-size: 12px; text-align: center; color: #ccc; }
+
+#recolor-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-bottom: 12px;
+    max-height: 150px;
+    overflow-y: auto;
+    padding: 5px;
+    background-color: rgba(0,0,0,0.2);
+    border-radius: 4px;
+}
+.recolor-swatch {
+    width: 24px; height: 24px;
+    border: 2px solid #555;
+    cursor: pointer;
+    border-radius: 3px;
+    display: inline-block;
+    transition: border-color 0.15s ease, transform 0.1s ease;
+}
+.recolor-swatch:hover { border-color: #fff; transform: scale(1.1); }
+
+#recolor-reset-btn { display: block; width: 100%; margin-top: 8px; background-color: #777; border-color: #555; }
+#recolor-reset-btn:hover:not(:disabled) { background-color: #888; }
+
+#recolor-panel .close-btn { /* Adjust close button for this panel */
+    top: 5px; right: 5px;
+    width: 20px; height: 20px;
+    line-height: 18px;
+    font-size: 12px;
+}
+/* --- *** End Recolor Panel *** --- */
+
+#open-shop-btn {
+    background-color: #007bff; /* Blue */
+    border-color: #0056b3;
+    color: white;
+}
+#open-shop-btn:hover:not(:disabled) {
+    background-color: #0056b3;
+}
+
+/* --- *** NEW: Shop Panel *** --- */
+#shop-panel {
+    /* Position opposite inventory, for example */
+    top: 10px;
+    right: calc(10px + 200px + 10px); /* right-margin + inventory-width + gap */
+    width: 220px; /* Adjust as needed */
+    max-height: calc(70% - 20px); /* Example max height */
+    background-color: rgba(35, 50, 40, 0.92); /* Slightly different color */
+    border: 1px solid #8fbc8f; /* DarkSeaGreen border */
+    z-index: 140; /* Below recolor/profile maybe */
+    display: flex; /* Use flexbox for layout */
+    flex-direction: column;
+    padding: 12px;
+    box-shadow: -3px 3px 8px rgba(0, 0, 0, 0.5); /* Shadow on the left */
+}
+
+#shop-panel h4 {
+    margin: 0 0 10px 0;
+    text-align: center;
+    color: #98fb98; /* PaleGreen title */
+    font-size: 14px;
+    flex-shrink: 0; /* Prevent title shrinking */
+}
+
+#shop-items {
+    display: flex;
+    flex-direction: column;
+    gap: 8px; /* Spacing between shop items */
+    flex-grow: 1; /* Allow item list to take space */
+    overflow-y: auto; /* Enable scrolling */
+    padding: 5px;
+    background-color: rgba(0,0,0,0.15);
+    border-radius: 4px;
+    /* Add scrollbar styling */
+    scrollbar-width: thin;
+    scrollbar-color: #6a7a8a #3a4a5a;
+}
+
+#shop-items::-webkit-scrollbar { width: 6px; }
+#shop-items::-webkit-scrollbar-track { background: #3a4a5a; border-radius: 3px; }
+#shop-items::-webkit-scrollbar-thumb { background-color: #6a7a8a; border-radius: 3px; }
+
+.shop-item {
+    background-color: rgba(70, 90, 80, 0.8);
+    border: 1px solid #668066;
+    border-radius: 4px;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between; /* Space out elements */
+    gap: 8px;
+    flex-shrink: 0; /* Prevent items shrinking */
+}
+
+.shop-item-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    /* Prevent info shrinking too much */
+    flex-grow: 1;
+    overflow: hidden; /* Clip long names */
+}
+
+.shop-item-info .item-preview { /* Reuse inventory preview style */
+     /* Inherits from .inventory-item styles if defined globally, else redefine */
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 1px solid #333;
+    vertical-align: middle;
+    flex-shrink: 0;
+    margin-right: 4px;
+}
+
+.shop-item-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-grow: 1; /* Allow name to take space */
+}
+
+.shop-item-price {
+    font-weight: bold;
+    color: #FFD700; /* Gold */
+    white-space: nowrap;
+    margin-left: auto; /* Push price to the right if needed */
+    flex-shrink: 0;
+}
+
+.shop-item button.buy-btn {
+    /* Style the buy button */
+    background-color: #28a745; /* Green */
+    border-color: #1e7e34;
+    color: white;
+    font-size: 11px;
+    padding: 4px 8px;
+    flex-shrink: 0; /* Prevent button shrinking */
+}
+.shop-item button.buy-btn:hover:not(:disabled) {
+    background-color: #218838;
+}
+.shop-item button.buy-btn:disabled {
+    background-color: #555;
+    border-color: #444;
+}
+
+#shop-panel .close-btn {
+    /* Adjust close button if needed */
+    top: 5px; right: 5px;
+    width: 20px; height: 20px;
+    line-height: 18px;
+    font-size: 12px;
+}
+
+#chat-log p.admin-msg-log {
+    color: #00BCD4; /* Cyan */
+    font-weight: bold;
+    /* background-color: rgba(0, 100, 120, 0.1); /* Optional subtle background */
+    /* border-left: 3px solid #00BCD4; /* Optional marker */
+    /* padding-left: 5px; */
+}
+
+/* Style for Announcements */
+#chat-log p.announcement-msg {
+    color: #FFEB3B; /* Yellow */
+    font-weight: bold;
+    font-size: 14px;
+    background-color: rgba(100, 90, 20, 0.2);
+    border: 1px dashed #FFEB3B;
+    padding: 4px;
+    text-align: center;
+}
+
+/* --- Media Queries (Optional Example) --- */
+/* @media (max-width: 950px) {
+    #game-container { width: 95vw; height: 68vh; }
+    #coords-debug { width: 200px; height: 80px; font-size: 10px;}
+    #chat-area { width: 280px; height: 140px;}
+    #inventory-panel { width: 160px;}
+    #player-currency { font-size: 11px; padding: 3px 6px;}
+} */
