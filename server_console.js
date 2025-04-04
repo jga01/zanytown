@@ -1,34 +1,16 @@
 "use strict";
 
 const readline = require("readline");
-const path = require("path"); // Needed for save/load global state
-const fs = require("fs"); // Needed for save/load global state
 const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config"); // For avatar states, item defs etc.
-const { ServerGameObject } = require("./lib/game_objects"); // For accessing global nextId
 
-// --- FIX: Correct the path to the User model ---
-// Assuming server_console.js is in the project root and models is a subdirectory
 const User = require("./models/user");
-
-// Import specific handler if needed for direct calls (like teleport using room change)
-// Ensure the path is correct based on your project structure
-let handleChangeRoom;
-try {
-  // Assuming server_socket_handlers is also in the root
-  handleChangeRoom = require("./server_socket_handlers").handleChangeRoom;
-} catch (e) {
-  console.error(
-    "Failed to import handleChangeRoom from server_socket_handlers:",
-    e
-  );
-  handleChangeRoom = null; // Set to null if import fails
-}
 
 // --- Globals passed from server.js ---
 let rooms; // Map<roomId, ServerRoom>
 let io;
 let clients; // Map: socket.id -> { socket, avatarId, userId }
 let shutdownCallback; // Function to call for graceful shutdown
+let handleChangeRoom;
 
 /**
  * Initializes the console command interface.
@@ -36,12 +18,30 @@ let shutdownCallback; // Function to call for graceful shutdown
  * @param {import('socket.io').Server} ioInstance - The Socket.IO server instance.
  * @param {object} clientsMap - The map tracking client connections.
  * @param {Function} shutdownFunc - The function to trigger server shutdown.
+ * @param {Function} changeRoomHandler - The function to handle room changes.
  */
-function initializeConsole(roomsMap, ioInstance, clientsMap, shutdownFunc) {
+function initializeConsole(
+  roomsMap,
+  ioInstance,
+  clientsMap,
+  shutdownFunc,
+  changeRoomHandler
+) {
   rooms = roomsMap;
   io = ioInstance;
   clients = clientsMap;
   shutdownCallback = shutdownFunc;
+  handleChangeRoom = changeRoomHandler;
+
+  if (typeof handleChangeRoom !== "function") {
+    console.error(
+      "Console Initialization Warning: handleChangeRoom function was not provided or is not a function. Teleport command may fail."
+    );
+    // Set to a dummy function to prevent crashes, maybe?
+    handleChangeRoom = () => {
+      console.error("handleChangeRoom function is not available!");
+    };
+  }
 
   const rl = readline.createInterface({
     input: process.stdin,

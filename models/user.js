@@ -1,8 +1,5 @@
-// models/user.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
-// REMOVE the attempt to require config here during definition
-// let SHARED_CONFIG = {}; try { SHARED_CONFIG = require('../lib/config').SHARED_CONFIG; } catch(e) {}
 
 const userSchema = new mongoose.Schema(
   {
@@ -26,8 +23,7 @@ const userSchema = new mongoose.Schema(
     // Game State Fields
     currency: {
       type: Number,
-      // Use a simple, hardcoded default value here
-      default: 10, // <-- CHANGE: Use static default
+      default: 10,
     },
     inventory: {
       type: Map,
@@ -36,12 +32,11 @@ const userSchema = new mongoose.Schema(
     },
     bodyColor: {
       type: String,
-      default: "#6CA0DC", // Static default
+      default: "#6CA0DC",
     },
     lastRoomId: {
       type: String,
-      // Use a simple, hardcoded default value here
-      default: "main_lobby", // <-- CHANGE: Use static default (make sure this ID is valid)
+      default: "main_lobby",
     },
     lastX: { type: Number, default: null }, // Default spawn coords handled on load
     lastY: { type: Number, default: null },
@@ -71,8 +66,5 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
     return false;
   }
 };
-
-// REMOVE the second attempt to load config here as well
-// try { ... } catch (e) { ... }
 
 module.exports = mongoose.model("User", userSchema);

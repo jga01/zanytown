@@ -253,8 +253,8 @@ async function startServer() {
     }
     console.log(`Finished initializing rooms. ${rooms.size} room(s) active.`);
 
-    // 3. Runtime ID counter is reset automatically (part of ServerGameObject class static)
-    // REMOVED: Loading/Calculation of persistent nextId
+    const findAvatarGloballyFunc = ConsoleCommands.findAvatarGlobally;
+    const handleChangeRoomFunc = SocketHandlers.handleChangeRoom;
 
     // 4. Initialize Socket Handlers (pass DB helpers)
     SocketHandlers.initializeHandlers(
@@ -264,8 +264,7 @@ async function startServer() {
       findUserByIdFromDB, // Pass DB function
       updateUserInDB // Pass DB function
     );
-    const roomChangeHandler = SocketHandlers.handleChangeRoom; // Get reference for game loop
-    if (typeof roomChangeHandler !== "function") {
+    if (typeof handleChangeRoomFunc !== "function") {
       throw new Error(
         "Failed to get handleChangeRoom function from SocketHandlers module."
       );
@@ -393,7 +392,11 @@ async function startServer() {
         }
         try {
           // update() handles avatar movement and returns DTOs of changed avatars
-          const updates = room.update(cappedDeltaTimeMs, io, roomChangeHandler);
+          const updates = room.update(
+            cappedDeltaTimeMs,
+            io,
+            handleChangeRoomFunc
+          );
           // Broadcast updates for changed avatars TO THEIR CURRENT ROOM
           if (updates.changedAvatars && updates.changedAvatars.length > 0) {
             updates.changedAvatars.forEach((avatarDTO) => {
@@ -432,7 +435,8 @@ async function startServer() {
         rooms,
         io,
         clients,
-        shutdown
+        shutdown,
+        handleChangeRoomFunc
       );
     });
   } catch (error) {
