@@ -1,226 +1,467 @@
-body {
+/* --- ZanyTown Theme --- */
+@import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Quicksand:wght@400;600&display=swap');
+
+/* --- Global & Reset --- */
+* {
+    box-sizing: border-box;
     margin: 0;
-    font-family: Verdana, Geneva, Tahoma, sans-serif;
-    background-color: #333;
-    color: #eee;
+    padding: 0;
+}
+
+:root {
+    /* Define Zany color palette */
+    --bg-main: #f0faff; /* Very Light Blue */
+    --bg-panel: rgba(255, 240, 245, 0.95); /* Lavender Blush */
+    --bg-panel-header: rgba(255, 228, 185, 0.98); /* Peach Puff */
+    --bg-input: #ffffff;
+    --bg-item: rgba(173, 216, 230, 0.8); /* Light Blue */
+    --bg-item-hover: rgba(144, 238, 144, 0.9); /* Light Green */
+    --border-color: #ff7f50; /* Coral */
+    --border-dashed-color: #ff69b4; /* Hot Pink */
+    --text-primary: #3d3d3d; /* Dark Gray */
+    --text-secondary: #7a7a7a; /* Medium Gray */
+    --text-highlight: #ff4500; /* OrangeRed */
+    --text-gold: #b8860b; /* DarkGoldenrod */
+    --text-error: #dc143c; /* Crimson */
+    --text-info: #1e90ff; /* DodgerBlue */
+    --text-success: #228b22; /* ForestGreen */
+    --accent-color: #ff69b4; /* Hot Pink */
+    --accent-color-dark: #ff1493; /* Deep Pink */
+    --accent-color-green: #32cd32; /* Lime Green */
+    --accent-color-green-dark: #228b22; /* Forest Green */
+    --accent-color-orange: #ffa500; /* Orange */
+    --accent-color-orange-dark: #ff8c00; /* Dark Orange */
+    --accent-color-red: #ff6347; /* Tomato */
+    --accent-color-red-dark: #e53e30;
+    --accent-color-purple: #9370db; /* Medium Purple */
+    --accent-color-purple-dark: #8a2be2; /* Blue Violet */
+    --accent-color-blue: #87cefa; /* Light Sky Blue */
+    --accent-color-blue-dark: #00bfff; /* Deep Sky Blue */
+
+    /* Define Zany fonts & spacing */
+    --font-main: 'Quicksand', Verdana, sans-serif; /* Friendly sans-serif */
+    --font-header: 'Fredoka One', cursive; /* Playful header font */
+    --font-mono: monospace;
+    --base-font-size: 14px; /* Slightly larger base */
+    --panel-padding: 12px;
+    --panel-radius: 15px; /* More rounded */
+    --scrollbar-track: #fde0e0; /* Light pinkish track */
+    --scrollbar-thumb: #fab1a0; /* Light Salmon thumb */
+    --scrollbar-thumb-hover: #ff7f50; /* Coral hover */
+}
+
+body {
+    font-family: var(--font-main);
+    background-color: var(--bg-main);
+    color: var(--text-primary);
     overflow: hidden; /* Prevents scrollbars on the body */
+    font-size: var(--base-font-size);
+    line-height: 1.5;
+}
+
+/* --- Main Layout --- */
+#app-wrapper {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    max-width: 1800px; /* Optional: Max width for very large screens */
+    margin: 0 auto; /* Center if max-width is applied */
+}
+
+#main-header {
+    display: flex;
     align-items: center;
-    min-height: 100vh;
-    font-size: 14px;
+    padding: 8px 20px;
+    background-color: var(--bg-panel-header);
+    border-bottom: 3px dashed var(--border-dashed-color); /* Dashed border */
+    flex-shrink: 0;
+    gap: 20px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+#main-header h1 {
+    font-family: var(--font-header);
+    font-size: 1.8em;
+    color: var(--text-highlight);
+    margin-right: auto; /* Push other items to the right */
+    letter-spacing: 1px;
+    text-shadow: 1px 1px 1px rgba(0,0,0,0.1);
+}
+
+.header-info {
+    font-weight: 600; /* Use Quicksand bold weight */
+    white-space: nowrap;
+    background-color: rgba(255, 255, 255, 0.7);
+    padding: 5px 10px;
+    border-radius: 10px;
+    color: var(--text-primary);
+}
+#player-currency { color: var(--text-gold); border: 1px solid var(--text-gold);}
+
+#main-content {
+    display: flex;
+    flex-grow: 1; /* Take remaining vertical space */
+    overflow: hidden; /* Prevent content overflow */
+}
+
+.sidebar {
+    width: 240px; /* Slightly wider sidebar */
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    background: linear-gradient(135deg, #e0f7fa, #ffebee); /* Light gradient */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    border-color: var(--border-color);
+    border-style: solid;
+    border-width: 0;
+}
+.sidebar::-webkit-scrollbar { width: 10px; }
+.sidebar::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
+.sidebar::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; border: 1px solid #f7c1ae; }
+.sidebar::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
+
+#left-sidebar { border-right-width: 2px; }
+#right-sidebar { border-left-width: 2px; }
+
+#game-world {
+    flex-grow: 1; /* Take remaining horizontal space */
+    display: flex;
+    flex-direction: column; /* Stack canvas and chat */
+    position: relative; /* For absolutely positioned overlay panels */
+    overflow: hidden; /* Clip canvas if needed */
+    background-color: #d4f0f0; /* Light cyan-ish background */
 }
 
 #game-container {
-    position: relative; /* Crucial for absolute positioning of child UI panels */
-    width: 900px;
-    height: 650px;
-    background-color: #222;
-    border: 2px solid #555;
-    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
-    overflow: hidden; /* Clip contents */
+    position: relative; /* Needed for absolute positioning of canvas overlays */
+    width: 100%;
+    flex-grow: 1; /* Canvas container takes most space */
+    background-color: #d4f0f0; /* Match game-world */
     cursor: grab; /* Default cursor indicating pannable map */
+    overflow: hidden;
 }
 
 #gameCanvas {
     display: block;
-    background-color: #003366; /* Dark blue background rendered behind tiles */
     width: 100%;
     height: 100%;
+    /* Background set in JS clear or container */
 }
 
-/* --- UI Panel Base --- */
+/* --- UI Panel Base (Sidebar Version) --- */
 .ui-panel {
-    position: absolute;
-    background-color: rgba(20, 20, 30, 0.85);
-    border: 1px solid #778899;
-    border-radius: 6px;
-    padding: 10px;
-    color: #e0e0e0;
-    font-size: 12px;
-    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4);
-    box-sizing: border-box;
-    z-index: 10; /* Above canvas, below bubbles/profile */
+    background-color: var(--bg-panel);
+    border: 2px solid var(--border-color);
+    border-radius: var(--panel-radius);
+    padding: var(--panel-padding);
+    color: var(--text-primary);
+    font-size: var(--base-font-size);
+    box-shadow: 3px 3px 8px rgba(0, 0, 0, 0.15);
+    /* Subtle noise texture */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23ff7f50' fill-opacity='0.1' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
+}
+
+.panel-column { /* For panels stacked vertically in sidebars */
+    display: flex;
+    flex-direction: column;
+}
+
+.ui-panel h4 {
+    margin: 0 0 10px 0;
+    padding-bottom: 8px;
+    text-align: center;
+    color: var(--text-highlight);
+    font-family: var(--font-header);
+    font-size: 1.3em;
+    border-bottom: 2px dashed var(--border-dashed-color); /* Dashed border */
+    flex-shrink: 0;
+    letter-spacing: 1px;
+}
+
+/* --- Floating Panels (Over Canvas) --- */
+.floating-panel {
+    position: absolute; /* Position relative to #game-container */
+    z-index: 200;
+    max-width: 320px; /* Limit width */
+    max-height: 80%; /* Limit height */
+    overflow-y: auto;
+    border-width: 3px; /* Thicker border */
+    border-style: double; /* Double border */
+    border-color: var(--accent-color-purple);
+    background-color: rgba(230, 230, 250, 0.97); /* Lavender background */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+.floating-panel::-webkit-scrollbar { width: 10px; }
+.floating-panel::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
+.floating-panel::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; }
+.floating-panel::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
+
+#profile-panel {
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 300px;
+}
+#recolor-panel {
+    top: 15px; right: 15px;
+    width: 200px;
+    border-color: var(--accent-color-green);
+}
+#shop-panel {
+    top: 15px; left: 15px;
+    width: 280px;
+    border-color: var(--accent-color-blue-dark);
 }
 
 /* --- Debug Panel --- */
 #coords-debug {
-    bottom: 10px;
-    left: 10px;
-    width: 280px;
-    height: 110px;
-    overflow-y: auto;
-    font-family: monospace;
-    font-size: 11px;
-    line-height: 1.3;
-    background-color: rgba(0, 0, 0, 0.7);
-    border-color: #444;
-    padding: 8px;
+    min-height: 150px; /* Example minimum height */
+    border-color: var(--text-secondary);
+    background-color: rgba(240, 240, 240, 0.9);
 }
+#coords-debug h4 { font-size: 1.1em; margin-bottom: 6px; color: #555; border-color: #aaa; }
+#debug-content {
+     font-family: var(--font-mono);
+     font-size: 11px;
+     line-height: 1.4;
+     overflow-y: auto;
+     height: 100%;
+     padding: 5px;
+     color: #333;
+     scrollbar-width: thin;
+     scrollbar-color: #ccc #eee;
+}
+#debug-content::-webkit-scrollbar { width: 8px; }
+#debug-content::-webkit-scrollbar-track { background: #eee; border-radius: 4px; }
+#debug-content::-webkit-scrollbar-thumb { background-color: #ccc; border-radius: 4px; border: 1px solid #bbb; }
+#debug-content::-webkit-scrollbar-thumb:hover { background-color: #bbb; }
 
-/* --- Chat Area --- */
+/* --- Chat Area (Below Canvas) --- */
 #chat-area {
-    bottom: 10px;
-    right: 10px;
-    width: 320px;
-    height: 160px;
+    height: 200px; /* Slightly taller */
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
+    border: none; /* Remove panel border */
+    background: transparent; /* No background */
+    box-shadow: none;
+    padding: 0 10px 10px 10px; /* Padding around chat log/input */
 }
 
 #chat-log {
     flex-grow: 1;
     overflow-y: auto;
-    margin-bottom: 8px;
-    border: 1px solid #555;
-    padding: 6px;
-    background-color: rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
+    margin-bottom: 10px;
+    border: 2px solid var(--accent-color-blue);
+    padding: 8px 10px;
+    background-color: rgba(255, 255, 255, 0.9); /* Whiteish background */
+    border-radius: 10px;
     scrollbar-width: thin;
-    scrollbar-color: #666 #333; /* Firefox */
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
-
-/* Webkit scrollbar styling */
-#chat-log::-webkit-scrollbar { width: 8px; }
-#chat-log::-webkit-scrollbar-track { background: #333; border-radius: 4px; }
-#chat-log::-webkit-scrollbar-thumb { background-color: #666; border-radius: 4px; border: 1px solid #333; }
+#chat-log::-webkit-scrollbar { width: 10px; }
+#chat-log::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
+#chat-log::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; border: 1px solid #f7c1ae;}
+#chat-log::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
 
 #chat-log p {
-    margin: 3px 0;
-    line-height: 1.3;
+    margin: 4px 0;
+    line-height: 1.4;
     word-wrap: break-word;
-    font-size: 13px;
-    color: #E0E0E0;
+    font-size: inherit;
+    color: var(--text-primary);
 }
-
-/* Specific message type styles */
-#chat-log p.info-msg { color: #87CEEB; font-style: italic; }
-#chat-log p.error-msg { color: #FF6347; font-weight: bold; }
-#chat-log p.server-msg { color: #FFD700; font-weight: bold; }
-#chat-log p.self-msg { color: #90EE90; font-weight: bold; }
+#chat-log p.info-msg { color: var(--text-info); font-style: italic; }
+#chat-log p.error-msg { color: var(--text-error); font-weight: 600; }
+#chat-log p.server-msg { color: var(--accent-color-purple); font-weight: 600; }
+#chat-log p.self-msg { color: var(--text-success); font-weight: 600; }
+#chat-log p.admin-msg { color: var(--text-highlight); font-weight: 600; font-family: var(--font-header);}
+#chat-log p.announcement-msg {
+    color: #ff1493; /* Deep Pink */
+    font-weight: 600;
+    font-size: 1.1em;
+    background-color: rgba(255, 182, 193, 0.3); /* Light Pink */
+    border: 2px dashed #ff69b4; /* Hot Pink */
+    padding: 6px 10px;
+    text-align: center;
+    border-radius: 8px;
+    font-family: var(--font-header);
+}
 
 #chat-input {
     width: 100%;
-    padding: 8px;
-    border: 1px solid #778899;
-    background-color: #2a2a3a;
-    color: #fff;
-    border-radius: 4px;
-    box-sizing: border-box;
-    font-size: 13px;
+    padding: 10px 12px;
+    border: 2px solid var(--accent-color);
+    background-color: var(--bg-input);
+    color: var(--text-primary);
+    border-radius: 10px;
+    font-size: inherit;
+    font-weight: 600;
+    flex-shrink: 0;
 }
-#chat-input:focus { outline: none; border-color: #aaa; }
+#chat-input:focus { outline: none; border-color: var(--accent-color-dark); box-shadow: 0 0 5px var(--accent-color); }
 
 /* --- Inventory Panel --- */
 #inventory-panel {
-    top: 10px;
-    right: 10px;
-    width: 200px;
-    max-height: calc(60% - 20px); /* Example max height */
-    display: flex;
-    flex-direction: column;
+    flex-grow: 1;
+    min-height: 150px;
 }
-
-#inventory-panel h4 { margin: 0 0 8px 0; text-align: center; color: #ccc; flex-shrink: 0; }
 
 #inventory-items {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     flex-grow: 1;
-    overflow-y: auto; /* Scroll *within* the items list */
-    padding-right: 4px;
-    padding-bottom: 5px;
+    overflow-y: auto;
+    padding-right: 6px;
     scrollbar-width: thin;
-    scrollbar-color: #667 #344;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
-#inventory-items::-webkit-scrollbar { width: 6px; }
-#inventory-items::-webkit-scrollbar-track { background: #344; border-radius: 3px; }
-#inventory-items::-webkit-scrollbar-thumb { background-color: #667; border-radius: 3px; }
+#inventory-items::-webkit-scrollbar { width: 10px; }
+#inventory-items::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
+#inventory-items::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; }
+#inventory-items::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
 
 .inventory-item {
-    padding: 5px 8px;
-    border: 1px solid #667;
-    border-radius: 4px;
+    padding: 8px 12px;
+    border: 2px solid var(--accent-color-blue);
+    border-radius: 10px;
     cursor: pointer;
-    background-color: rgba(70, 80, 90, 0.7);
+    background-color: var(--bg-item);
     display: flex;
     align-items: center;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
+    transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
     flex-shrink: 0;
-    font-size: 11px;
-    line-height: 1.2;
+    font-size: 13px;
+    line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
 }
-.inventory-item:hover { background-color: #5a6a7a; border-color: #99aabb; }
-.inventory-item.selected { /* Highlight when selected for placing */
-    border-color: #ffcc00;
-    background-color: #886600;
-    font-weight: bold;
-    color: #fff;
-    box-shadow: inset 0 0 5px rgba(255, 255, 0, 0.3);
+.inventory-item:hover {
+    background-color: var(--bg-item-hover);
+    border-color: var(--accent-color-green);
+    transform: translateX(3px);
+}
+.inventory-item.selected {
+    border-color: var(--text-gold);
+    background-color: rgba(255, 235, 150, 0.9); /* Light gold */
+    font-weight: 600;
+    color: #8B4513; /* Brown text */
+    box-shadow: inset 0 0 8px rgba(184, 134, 11, 0.5);
+    transform: scale(1.02);
 }
 
-.item-preview {
+.item-preview { /* Used in Inventory & Shop */
     display: inline-block;
-    width: 18px;
-    height: 18px;
-    border: 1px solid #333;
-    margin-right: 8px;
+    width: 24px;
+    height: 24px;
+    border: 2px solid #777;
+    margin-right: 10px;
     vertical-align: middle;
     flex-shrink: 0;
+    border-radius: 5px;
+    box-shadow: inset 1px 1px 2px rgba(0,0,0,0.2);
 }
 
 .inventory-actions {
-    margin-top: 10px;
+    margin-top: 12px;
     display: flex;
-    gap: 5px;
+    gap: 10px;
     flex-wrap: wrap;
     flex-shrink: 0;
+    border-top: 2px dashed rgba(255, 127, 80, 0.5); /* Coral dashed */
+    padding-top: 10px;
 }
 
-/* --- Room Controls & General Buttons --- */
-#room-controls { top: 10px; left: 10px; display: flex; gap: 5px; }
+/* --- Room Controls (Sidebar) --- */
+#room-controls {
+    gap: 10px;
+}
+#room-controls button { width: 100%; }
 
+/* --- General Button Styles --- */
 button {
-    padding: 6px 10px;
-    background-color: #5a6a7a;
-    border: 1px solid #8899aa;
-    color: #e0e0e0;
+    padding: 10px 15px;
+    background-color: var(--accent-color-blue);
+    border: 2px solid var(--accent-color-blue-dark);
+    color: var(--text-primary);
     cursor: pointer;
-    border-radius: 4px;
-    font-size: 12px;
-    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    border-radius: 12px; /* Rounded */
+    font-size: 13px;
+    font-weight: 600; /* Quicksand bold */
+    transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.15s cubic-bezier(0.68, -0.55, 0.27, 1.55); /* Bounce effect */
     white-space: nowrap;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    text-shadow: 1px 1px 1px rgba(0,0,0,0.1);
 }
-button:hover:not(:disabled) { background-color: #6a7a8a; border-color: #aabccd; }
-button:active:not(:disabled) { transform: scale(0.97); }
+button:hover:not(:disabled) {
+    background-color: var(--accent-color-blue-dark);
+    border-color: var(--accent-color-blue);
+    transform: translateY(-2px) rotate(-1deg) scale(1.03);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+button:active:not(:disabled) {
+    transform: translateY(1px) rotate(1deg) scale(0.98);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+}
 button:disabled {
-    background-color: #444;
-    border-color: #666;
-    color: #888;
+    background-color: #b0bec5; /* Light grey */
+    border-color: #90a4ae; /* Darker grey */
+    color: #607d8b; /* Darkest grey text */
     cursor: not-allowed;
     transform: none;
+    box-shadow: none;
+    text-shadow: none;
+    filter: grayscale(0.5);
 }
 
-/* Specific Button Styles */
-#toggle-edit-btn { background-color: #4CAF50; border-color: #388E3C; color: white; }
-#toggle-edit-btn:hover:not(:disabled) { background-color: #66BB6A; }
-#toggle-edit-btn.active { /* Style when Edit Mode is ON */
-    background-color: #FF9800;
-    border-color: #F57C00;
+/* Specific Button Styles (Using Zany Accents) */
+#logout-btn { background-color: var(--accent-color-red); border-color: var(--accent-color-red-dark); color: white; margin-left: auto; }
+#logout-btn:hover:not(:disabled) { background-color: var(--accent-color-red-dark); }
+
+#toggle-edit-btn { background-color: var(--accent-color-green); border-color: var(--accent-color-green-dark); color: white; font-family: var(--font-header); }
+#toggle-edit-btn:hover:not(:disabled) { background-color: var(--accent-color-green-dark); }
+#toggle-edit-btn.active {
+    background-color: var(--accent-color-orange);
+    border-color: var(--accent-color-orange-dark);
     color: black;
 }
-#toggle-edit-btn.active:hover:not(:disabled) { background-color: #FFA726; }
+#toggle-edit-btn.active:hover:not(:disabled) { background-color: var(--accent-color-orange-dark); }
 
-#pickup-furni-btn { background-color: #aa0000; border-color: #770000; color: white; }
-#pickup-furni-btn:hover:not(:disabled) { background-color: #cc0000; }
+#pickup-furni-btn { background-color: var(--accent-color-red); border-color: var(--accent-color-red-dark); color: white; flex-grow: 1; }
+#pickup-furni-btn:hover:not(:disabled) { background-color: var(--accent-color-red-dark); }
 
-#recolor-furni-btn { background-color: #8A2BE2; border-color: #4B0082; color: white; }
-#recolor-furni-btn:hover:not(:disabled) { background-color: #9932CC; }
-#recolor-furni-btn[style*="display: none"] { display: none !important; } /* Ensures JS hide overrides */
+#recolor-furni-btn { background-color: var(--accent-color-purple); border-color: var(--accent-color-purple-dark); color: white; flex-grow: 1; }
+#recolor-furni-btn:hover:not(:disabled) { background-color: var(--accent-color-purple-dark); }
+#recolor-furni-btn[style*="display: none"] { display: none !important; }
+
+#open-shop-btn { background-color: var(--accent-color); border-color: var(--accent-color-dark); color: white; }
+#open-shop-btn:hover:not(:disabled) { background-color: var(--accent-color-dark); }
+
+.close-btn {
+    position: absolute;
+    top: 8px; right: 8px;
+    background-color: var(--accent-color-red);
+    color: white;
+    border: 2px solid var(--accent-color-red-dark);
+    border-radius: 50%;
+    width: 28px; height: 28px;
+    line-height: 24px; /* Adjust for centering */
+    text-align: center;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 0;
+    transition: background-color 0.15s ease, transform 0.1s ease;
+    z-index: 10;
+}
+.close-btn:hover { background-color: var(--accent-color-red-dark); transform: scale(1.1) rotate(90deg); }
 
 /* --- Chat Bubbles --- */
 #chat-bubbles-container {
@@ -229,323 +470,240 @@ button:disabled {
     left: 0;
     width: 100%;
     height: 100%;
-    pointer-events: none; /* Allows clicks to pass through */
+    pointer-events: none;
     overflow: hidden;
-    z-index: 100; /* Above most UI */
+    z-index: 100;
 }
 
 .chat-bubble {
     position: absolute;
-    background-color: rgba(255, 255, 255, 0.9);
-    color: #111;
-    padding: 6px 10px;
-    border-radius: 12px;
-    border: 1px solid #aaa;
+    background-color: rgba(255, 255, 153, 0.95); /* Light Yellow */
+    color: #555;
+    padding: 6px 12px;
+    border-radius: 20px 20px 20px 5px; /* Speech bubble shape */
+    border: 2px solid #ffcc00; /* Gold border */
     font-size: 13px;
-    max-width: 160px;
+    font-weight: 600;
+    max-width: 200px;
     word-wrap: break-word;
     text-align: center;
-    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
-}
-.chat-bubble::after { /* Pointer */
-    content: '';
-    position: absolute;
-    bottom: -5px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0; height: 0;
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-top: 6px solid rgba(255, 255, 255, 0.9);
-    filter: drop-shadow(0px 1px 1px rgba(0, 0, 0, 0.1));
+    box-shadow: 2px 3px 6px rgba(0, 0, 0, 0.2);
+    transform: translate(-50%, -100%); /* Position above anchor point */
+    transition: opacity 0.2s ease-out;
+    /* No pointer needed for this shape */
 }
 
 /* --- Cursor Styles --- */
 .dragging { cursor: grabbing !important; }
 .edit-mode-cursor { cursor: crosshair !important; }
-/* Default cursor set on #game-container */
 
 /* --- User List Panel --- */
 #user-list-panel {
-    top: calc(10px + 32px + 10px); /* Approx: top-margin + button-height + gap */
-    left: 10px;
-    width: 160px;
-    max-height: 300px;
-    overflow-y: auto;
-    background-color: rgba(30, 40, 50, 0.8);
+    flex-grow: 1;
+    min-height: 100px;
 }
-#user-list-panel h4 { margin: 0 0 8px 0; text-align: center; color: #b0c4de; }
-
 #user-list-content {
     list-style-type: none;
     padding: 0;
     margin: 0;
+    flex-grow: 1;
+    overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: #667 #344;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
-#user-list-content::-webkit-scrollbar { width: 6px; }
-#user-list-content::-webkit-scrollbar-track { background: #344; border-radius: 3px; }
-#user-list-content::-webkit-scrollbar-thumb { background-color: #667; border-radius: 3px; }
+#user-list-content::-webkit-scrollbar { width: 8px; }
+#user-list-content::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px; }
+#user-list-content::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 4px; }
+#user-list-content::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
 
 #user-list-content li {
-    padding: 4px 6px;
-    font-size: 12px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-}
-#user-list-content li:hover { background-color: rgba(255, 255, 255, 0.1); }
-#user-list-content li.self-user { font-weight: bold; color: #FFD700; background-color: rgba(80, 70, 30, 0.5); }
-#user-list-content li i { color: #888; } /* Loading/empty text */
-
-/* --- Profile Panel --- */
-#profile-panel {
-    top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 280px;
-    background-color: rgba(50, 50, 70, 0.95);
-    border: 1px solid #8a8aaf;
-    z-index: 200; /* Above other UI */
-    padding: 15px;
-    display: none; /* Hidden by default */
-}
-#profile-panel h4 { margin: 0 0 12px 0; color: #FFD700; text-align: center; font-size: 16px; border-bottom: 1px solid #777; padding-bottom: 8px; }
-#profile-panel p { margin: 8px 0; font-size: 13px; display: flex; align-items: center; line-height: 1.4; }
-.profile-color-swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid black; margin-right: 8px; margin-left: 5px; vertical-align: middle; flex-shrink: 0; }
-.profile-actions { margin-top: 15px; text-align: center; }
-
-.close-btn { /* General style for close buttons */
-    position: absolute;
-    top: 8px; right: 8px;
-    background-color: #800;
-    color: white;
-    border: 1px solid #500;
-    border-radius: 50%;
-    width: 22px; height: 22px;
-    line-height: 20px; /* Center the X */
-    text-align: center;
-    cursor: pointer;
-    font-weight: bold;
-    font-size: 14px;
-    padding: 0;
-    transition: background-color 0.15s ease;
-}
-.close-btn:hover { background-color: #A00; }
-
-/* --- Currency Display --- */
-#player-currency {
-    position: absolute;
-    top: 5px;
-    left: 50%; transform: translateX(-50%);
-    background-color: rgba(10, 10, 20, 0.75);
-    color: #FFD700;
-    padding: 4px 10px;
     border-radius: 8px;
-    font-size: 13px;
-    font-weight: bold;
-    z-index: 15;
-    border: 1px solid #444;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+    border-bottom: 1px solid rgba(255, 127, 80, 0.2); /* Light coral border */
 }
+#user-list-content li:last-child { border-bottom: none; }
+#user-list-content li:hover { background-color: rgba(255, 127, 80, 0.2); color: var(--text-highlight); transform: translateX(2px);}
+#user-list-content li.self-user { font-weight: 600; color: var(--text-gold); background-color: rgba(255, 235, 150, 0.3); border-left: 4px solid var(--text-gold); }
+#user-list-content li i { color: var(--text-secondary); }
 
-/* --- *** Start Recolor Panel *** --- */
-#recolor-panel {
-    top: 50%; right: 10px; transform: translateY(-50%); /* Example position */
-    width: 180px;
-    background-color: rgba(40, 40, 55, 0.92);
-    border: 1px solid #9999bb;
-    z-index: 150; /* Above most UI, below profile */
-    padding: 12px;
-    display: none; /* Hidden by default */
-    box-shadow: 3px 3px 8px rgba(0, 0, 0, 0.5);
-}
-#recolor-panel h4 { margin: 0 0 10px 0; text-align: center; color: #ddd; font-size: 14px; }
-#recolor-panel p { margin: 5px 0 10px 0; font-size: 12px; text-align: center; color: #ccc; }
+/* --- Profile Panel (Floating) --- */
+#profile-panel h4 { color: var(--accent-color-purple-dark); font-size: 1.4em; }
+#profile-panel p { margin: 10px 0; font-size: inherit; display: flex; align-items: center; line-height: 1.5; }
+.profile-color-swatch { display: inline-block; width: 20px; height: 20px; border: 2px solid black; margin-right: 10px; margin-left: 6px; vertical-align: middle; flex-shrink: 0; border-radius: 5px;}
+.profile-actions { margin-top: 18px; text-align: center; }
 
+/* --- Recolor Panel (Floating) --- */
+#recolor-panel h4 { color: var(--accent-color-green-dark); }
+#recolor-panel p { color: #555; font-weight: 600;}
 #recolor-swatches {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
     justify-content: center;
-    margin-bottom: 12px;
-    max-height: 150px;
+    margin-bottom: 15px;
+    max-height: 180px;
     overflow-y: auto;
-    padding: 5px;
-    background-color: rgba(0,0,0,0.2);
-    border-radius: 4px;
+    padding: 10px;
+    background-color: rgba(200, 255, 200, 0.5); /* Light green background */
+    border-radius: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
+#recolor-swatches::-webkit-scrollbar { width: 8px; }
+#recolor-swatches::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px; }
+#recolor-swatches::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 4px; }
+
 .recolor-swatch {
-    width: 24px; height: 24px;
-    border: 2px solid #555;
+    width: 32px; height: 32px;
+    border: 3px solid #888;
     cursor: pointer;
-    border-radius: 3px;
+    border-radius: 8px;
     display: inline-block;
-    transition: border-color 0.15s ease, transform 0.1s ease;
+    transition: border-color 0.2s ease, transform 0.15s ease;
+    box-shadow: 1px 1px 3px rgba(0,0,0,0.2);
 }
-.recolor-swatch:hover { border-color: #fff; transform: scale(1.1); }
+.recolor-swatch:hover { border-color: var(--text-highlight); transform: scale(1.15) rotate(5deg); }
+#recolor-reset-btn { display: block; width: 100%; margin-top: 10px; background-color: #aaa; border-color: #888; color: #444; }
+#recolor-reset-btn:hover:not(:disabled) { background-color: #bbb; }
 
-#recolor-reset-btn { display: block; width: 100%; margin-top: 8px; background-color: #777; border-color: #555; }
-#recolor-reset-btn:hover:not(:disabled) { background-color: #888; }
-
-#recolor-panel .close-btn { /* Adjust close button for this panel */
-    top: 5px; right: 5px;
-    width: 20px; height: 20px;
-    line-height: 18px;
-    font-size: 12px;
-}
-/* --- *** End Recolor Panel *** --- */
-
-#open-shop-btn {
-    background-color: #007bff; /* Blue */
-    border-color: #0056b3;
-    color: white;
-}
-#open-shop-btn:hover:not(:disabled) {
-    background-color: #0056b3;
-}
-
-/* --- *** NEW: Shop Panel *** --- */
-#shop-panel {
-    /* Position opposite inventory, for example */
-    top: 10px;
-    right: calc(10px + 200px + 10px); /* right-margin + inventory-width + gap */
-    width: 220px; /* Adjust as needed */
-    max-height: calc(70% - 20px); /* Example max height */
-    background-color: rgba(35, 50, 40, 0.92); /* Slightly different color */
-    border: 1px solid #8fbc8f; /* DarkSeaGreen border */
-    z-index: 140; /* Below recolor/profile maybe */
-    display: flex; /* Use flexbox for layout */
-    flex-direction: column;
-    padding: 12px;
-    box-shadow: -3px 3px 8px rgba(0, 0, 0, 0.5); /* Shadow on the left */
-}
-
-#shop-panel h4 {
-    margin: 0 0 10px 0;
-    text-align: center;
-    color: #98fb98; /* PaleGreen title */
-    font-size: 14px;
-    flex-shrink: 0; /* Prevent title shrinking */
-}
+/* --- Shop Panel (Floating) --- */
+#shop-panel h4 { color: var(--accent-color-blue-dark); font-size: 1.4em; }
 
 #shop-items {
     display: flex;
     flex-direction: column;
-    gap: 8px; /* Spacing between shop items */
-    flex-grow: 1; /* Allow item list to take space */
-    overflow-y: auto; /* Enable scrolling */
-    padding: 5px;
-    background-color: rgba(0,0,0,0.15);
-    border-radius: 4px;
-    /* Add scrollbar styling */
+    gap: 10px;
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 10px;
+    background-color: rgba(220, 240, 255, 0.6); /* Very light blue */
+    border-radius: 8px;
     scrollbar-width: thin;
-    scrollbar-color: #6a7a8a #3a4a5a;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
-
-#shop-items::-webkit-scrollbar { width: 6px; }
-#shop-items::-webkit-scrollbar-track { background: #3a4a5a; border-radius: 3px; }
-#shop-items::-webkit-scrollbar-thumb { background-color: #6a7a8a; border-radius: 3px; }
+#shop-items::-webkit-scrollbar { width: 10px; }
+#shop-items::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
+#shop-items::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; }
+#shop-items::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
 
 .shop-item {
-    background-color: rgba(70, 90, 80, 0.8);
-    border: 1px solid #668066;
-    border-radius: 4px;
-    padding: 8px;
+    background-color: rgba(240, 255, 240, 0.9); /* Honeydew */
+    border: 2px solid var(--accent-color-green);
+    border-radius: 10px;
+    padding: 10px 12px;
     display: flex;
     align-items: center;
-    justify-content: space-between; /* Space out elements */
-    gap: 8px;
-    flex-shrink: 0; /* Prevent items shrinking */
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+    box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
 }
-
 .shop-item-info {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    /* Prevent info shrinking too much */
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
     flex-grow: 1;
-    overflow: hidden; /* Clip long names */
+    overflow: hidden;
 }
-
-.shop-item-info .item-preview { /* Reuse inventory preview style */
-     /* Inherits from .inventory-item styles if defined globally, else redefine */
-    display: inline-block;
-    width: 16px;
-    height: 16px;
-    border: 1px solid #333;
-    vertical-align: middle;
-    flex-shrink: 0;
-    margin-right: 4px;
-}
-
 .shop-item-name {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex-grow: 1; /* Allow name to take space */
+    flex-grow: 1;
 }
-
 .shop-item-price {
-    font-weight: bold;
-    color: #FFD700; /* Gold */
+    font-weight: 600;
+    color: var(--text-gold);
+    background-color: rgba(184, 134, 11, 0.1);
+    padding: 3px 6px;
+    border-radius: 5px;
     white-space: nowrap;
-    margin-left: auto; /* Push price to the right if needed */
     flex-shrink: 0;
 }
-
 .shop-item button.buy-btn {
-    /* Style the buy button */
-    background-color: #28a745; /* Green */
-    border-color: #1e7e34;
+    background-color: var(--accent-color-orange);
+    border-color: var(--accent-color-orange-dark);
     color: white;
-    font-size: 11px;
-    padding: 4px 8px;
-    flex-shrink: 0; /* Prevent button shrinking */
-}
-.shop-item button.buy-btn:hover:not(:disabled) {
-    background-color: #218838;
-}
-.shop-item button.buy-btn:disabled {
-    background-color: #555;
-    border-color: #444;
-}
-
-#shop-panel .close-btn {
-    /* Adjust close button if needed */
-    top: 5px; right: 5px;
-    width: 20px; height: 20px;
-    line-height: 18px;
     font-size: 12px;
+    padding: 6px 12px;
+    flex-shrink: 0;
+    font-weight: 600;
+}
+.shop-item button.buy-btn:hover:not(:disabled) { background-color: var(--accent-color-orange-dark); }
+.shop-item button.buy-btn.cannot-afford {
+    filter: grayscale(0.8);
+    opacity: 0.7;
 }
 
-#chat-log p.admin-msg-log {
-    color: #00BCD4; /* Cyan */
-    font-weight: bold;
-    /* background-color: rgba(0, 100, 120, 0.1); /* Optional subtle background */
-    /* border-left: 3px solid #00BCD4; /* Optional marker */
-    /* padding-left: 5px; */
+/* --- Flash Animations --- */
+.flash-green { animation: flashGreen 0.6s ease-out; }
+.flash-red { animation: flashRed 0.6s ease-out; }
+
+@keyframes flashGreen {
+  0%, 100% { background-color: transparent; transform: scale(1); }
+  50% { background-color: rgba(76, 200, 80, 0.7); transform: scale(1.1); }
+}
+@keyframes flashRed {
+  0%, 100% { background-color: transparent; transform: scale(1); }
+  50% { background-color: rgba(220, 20, 60, 0.7); transform: scale(1.1); }
 }
 
-/* Style for Announcements */
-#chat-log p.announcement-msg {
-    color: #FFEB3B; /* Yellow */
-    font-weight: bold;
-    font-size: 14px;
-    background-color: rgba(100, 90, 20, 0.2);
-    border: 1px dashed #FFEB3B;
-    padding: 4px;
-    text-align: center;
+
+/* --- Responsive Adjustments --- */
+@media (max-width: 1000px) {
+    .sidebar { width: 200px; }
+    :root { --base-font-size: 13px; }
+    .ui-panel h4 { font-size: 1.2em; }
+    #chat-area { height: 180px; }
+    .inventory-item, .shop-item { padding: 6px 10px; }
+    .item-preview { width: 20px; height: 20px; }
+    #main-header { padding: 6px 15px; }
 }
 
-/* --- Media Queries (Optional Example) --- */
-/* @media (max-width: 950px) {
-    #game-container { width: 95vw; height: 68vh; }
-    #coords-debug { width: 200px; height: 80px; font-size: 10px;}
-    #chat-area { width: 280px; height: 140px;}
-    #inventory-panel { width: 160px;}
-    #player-currency { font-size: 11px; padding: 3px 6px;}
-} */
+@media (max-width: 768px) {
+    #main-header h1 { font-size: 1.4em; }
+    #main-content { flex-direction: column; } /* Stack vertically */
+    .sidebar {
+        width: 100%;
+        flex-direction: row; /* Sidebars become horizontal toolbars */
+        overflow-x: auto;
+        overflow-y: hidden;
+        height: auto;
+        padding: 8px;
+        border: none;
+        border-top: 2px solid var(--border-color);
+        border-bottom: 2px solid var(--border-color);
+        gap: 8px;
+        background: linear-gradient(90deg, #e0f7fa, #ffebee); /* Horizontal gradient */
+    }
+    .sidebar .ui-panel { /* Panels inside horizontal sidebar */
+       width: 180px; /* Adjust width for horizontal items */
+       flex-shrink: 0;
+       height: 110px; /* Example height */
+       overflow: hidden;
+    }
+    .sidebar .panel-column { height: 100%; } /* Ensure vertical panels fill */
+    #inventory-items, #user-list-content, #debug-content { height: auto; flex-grow: 1; }
+
+    #game-world { order: -1; } /* Move game world to top on mobile */
+    #left-sidebar { border: none; order: 1; }
+    #right-sidebar { border: none; order: 2; }
+    #chat-area { height: 150px; padding: 0 5px 5px 5px; }
+
+    /* Hide debug on small screens */
+    #coords-debug { display: none; }
+}
+
+@media (max-height: 550px) and (max-width: 768px) { /* Mobile Landscape */
+     #chat-area { height: 120px; }
+     .sidebar .ui-panel { height: 90px; width: 160px; }
+}

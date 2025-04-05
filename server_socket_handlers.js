@@ -1014,8 +1014,9 @@ async function handleRequestPickupFurni(socket, data) {
   // Ownership check using persistent User ID
   const clientInfo = clients[socket.id];
   if (
-    furniInstance.ownerId !== null &&
-    String(furniInstance.ownerId) !== clientInfo?.userId
+    furniInstance.ownerId === null ||
+    (furniInstance.ownerId !== null &&
+      String(furniInstance.ownerId) !== clientInfo?.userId)
   ) {
     socket.emit("action_failed", {
       action: "pickup",

@@ -3,105 +3,112 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ZanyTown</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZanyTown - Welcome!</title>
+    <!-- Link to the updated stylesheet -->
     <link rel="stylesheet" href="style.css">
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-        }
-        #game-container {
-            position: relative;
-        }
-        #player-currency {
-            position: absolute;
-            top: 5px;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: rgba(0, 0, 0, 0.6);
-            color: gold;
-            padding: 3px 8px;
-            border-radius: 5px;
-            font-size: 12px;
-            z-index: 15;
-        }
-    </style>
+    <!-- Google Fonts Import (moved inside style.css via @import) -->
 </head>
 
 <body>
-    <div id="player-currency">Gold: 0</div>
+    <!-- App Wrapper for overall layout -->
+    <div id="app-wrapper">
 
-    <!-- Start #game-container -->
-    <div id="game-container">
-        <canvas id="gameCanvas" width="900" height="650">
-            Your browser does not support the HTML5 canvas tag.
-        </canvas>
+        <!-- Header Bar -->
+        <header id="main-header">
+            <h1>🤪 ZanyTown! 🤪</h1>
+            <div id="room-name-display" class="header-info">Room: Loading...</div>
+            <div id="player-currency" class="header-info">Silly Coins: 0</div>
+            <button id="logout-btn" title="Log out and return to login screen">Bye Bye!</button>
+        </header>
 
-        <div id="coords-debug" class="ui-panel">Connecting...</div>
+        <!-- Main Content Area (Flex Row) -->
+        <main id="main-content">
 
-        <div id="chat-area" class="ui-panel">
-            <div id="chat-log"></div>
-            <input type="text" id="chat-input" placeholder="Type chat or /command..." autocomplete="off">
-        </div>
+            <!-- Left Sidebar -->
+            <aside id="left-sidebar" class="sidebar">
+                <div id="room-controls" class="ui-panel panel-column">
+                    <h4>Shenanigans</h4>
+                    <button id="zoom-in-btn" title="Zoom In (Scroll Up)">Get Closer!</button>
+                    <button id="zoom-out-btn" title="Zoom Out (Scroll Down)">Back Off!</button>
+                    <button id="toggle-edit-btn" title="Toggle Build/Edit Mode (E)">Make Stuff? (Off)</button>
+                    <button id="open-shop-btn" title="Open Shop Catalog">Gizmo Shop</button>
+                </div>
+                 <div id="user-list-panel" class="ui-panel panel-column">
+                     <h4>Who's Here?</h4>
+                     <ul id="user-list-content">
+                         <li><i>Looking for people...</i></li>
+                     </ul>
+                 </div>
+                 <div id="coords-debug" class="ui-panel panel-column">
+                     <h4>Nerd Stuff</h4>
+                     <div id="debug-content">Connecting...</div>
+                </div>
+            </aside>
 
-        <div id="inventory-panel" class="ui-panel">
-            <h4>Inventory</h4>
-            <div id="inventory-items">
-                <p><i>Loading inventory...</i></p>
+            <!-- Game Canvas Area (Center) -->
+            <div id="game-world">
+                <div id="game-container">
+                    <canvas id="gameCanvas">
+                        Uh oh! Your browser doesn't support the magic canvas!
+                    </canvas>
+                    <!-- Chat Bubbles Container -->
+                    <div id="chat-bubbles-container"></div>
+
+                    <!-- Floating Panels positioned OVER the canvas -->
+                    <div id="profile-panel" class="ui-panel floating-panel" style="display: none;">
+                         <button id="profile-close-btn" class="close-btn" title="Close Profile">X</button>
+                         <h4>Who Dat?</h4>
+                         <div id="profile-content"></div>
+                     </div>
+                     <div id="recolor-panel" class="ui-panel floating-panel" style="display: none;">
+                         <button id="recolor-close-btn" class="close-btn" title="Close Recolor">X</button>
+                         <h4>Splash Some Color!</h4>
+                         <p id="recolor-item-name">Item: ???</p>
+                         <div id="recolor-swatches">
+                             <p><i>Fetching colors...</i></p>
+                         </div>
+                         <button id="recolor-reset-btn" title="Reset to boring default color">Go Back!</button>
+                     </div>
+                     <div id="shop-panel" class="ui-panel floating-panel" style="display: none;">
+                         <button id="shop-close-btn" class="close-btn" title="Close Shop">X</button>
+                         <h4>Gizmo-Mart</h4>
+                         <div id="shop-items">
+                             <p><i>Stocking shelves...</i></p>
+                         </div>
+                     </div>
+
+                </div>
+                <!-- Chat Area (Below Canvas) -->
+                <div id="chat-area" class="ui-panel">
+                    <div id="chat-log"></div>
+                    <input type="text" id="chat-input" placeholder="Say something zany! Or type /help" autocomplete="off">
+                </div>
             </div>
-            <div class="inventory-actions">
-                <button id="pickup-furni-btn" disabled title="Pick up selected furniture (Delete/Backspace)">Pick Up</button>
-                <button id="recolor-furni-btn" disabled style="display: none;" title="Recolor selected furniture">Recolor</button>
-            </div>
-        </div>
 
-        <div id="room-controls" class="ui-panel">
-            <button id="zoom-in-btn" title="Zoom In (Scroll Up)">Zoom In (+)</button>
-            <button id="zoom-out-btn" title="Zoom Out (Scroll Down)">Zoom Out (-)</button>
-            <button id="toggle-edit-btn" title="Toggle Build/Edit Mode (E)">Room Edit (Off)</button>
-            <button id="open-shop-btn" title="Open Shop Catalog">Shop</button>
-            <button id="logout-btn" title="Log out and return to login screen">Logout</button>
-        </div>
 
-        <div id="user-list-panel" class="ui-panel">
-            <h4>Users Online</h4>
-            <ul id="user-list-content">
-                <li><i>Loading...</i></li>
-            </ul>
-        </div>
+            <!-- Right Sidebar -->
+            <aside id="right-sidebar" class="sidebar">
+                 <div id="inventory-panel" class="ui-panel panel-column">
+                    <h4>Your Junk</h4>
+                    <div id="inventory-items">
+                        <p><i>Pockets seem empty...</i></p>
+                    </div>
+                    <div class="inventory-actions">
+                        <button id="pickup-furni-btn" disabled title="Yoink! Pick up selected furniture (Delete/Backspace)">Yoink!</button>
+                        <button id="recolor-furni-btn" disabled style="display: none;" title="Recolor selected furniture">Paint It!</button>
+                    </div>
+                </div>
+                <!-- Could add more panels here later, e.g., quests, settings -->
+            </aside>
 
-        <div id="profile-panel" class="ui-panel" style="display: none;">
-            <button id="profile-close-btn" class="close-btn" title="Close Profile">X</button>
-            <div id="profile-content"></div>
-        </div>
+        </main>
 
-        <div id="chat-bubbles-container"></div>
-
-        <div id="recolor-panel" class="ui-panel" style="display: none;">
-            <button id="recolor-close-btn" class="close-btn" title="Close Recolor">X</button>
-            <h4>Recolor Item</h4>
-            <p id="recolor-item-name">Item: ???</p>
-            <div id="recolor-swatches">
-                <p><i>Loading colors...</i></p>
-            </div>
-            <button id="recolor-reset-btn" title="Reset to default color">Reset Color</button>
-        </div>
-
-        <div id="shop-panel" class="ui-panel" style="display: none;">
-            <button id="shop-close-btn" class="close-btn" title="Close Shop">X</button>
-            <h4>Shop Catalog</h4>
-            <div id="shop-items">
-                <!-- Shop items populated by JS -->
-                <p><i>Loading shop...</i></p>
-            </div>
-        </div>
-
-    </div><!-- End #game-container -->
+    </div> <!-- End #app-wrapper -->
 
     <!-- Load Socket.IO client library -->
     <script src="/socket.io/socket.io.js"></script>
-    <!-- Load Client Game Logic -->
+    <!-- Load Client Game Logic (Unchanged JS) -->
     <script src="client.js"></script>
 </body>
 
