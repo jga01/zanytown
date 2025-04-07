@@ -439,7 +439,6 @@ button:disabled {
 
 #recolor-furni-btn { background-color: var(--accent-color-purple); border-color: var(--accent-color-purple-dark); color: white; flex-grow: 1; }
 #recolor-furni-btn:hover:not(:disabled) { background-color: var(--accent-color-purple-dark); }
-#recolor-furni-btn[style*="display: none"] { display: none !important; }
 
 #open-shop-btn { background-color: var(--accent-color); border-color: var(--accent-color-dark); color: white; }
 #open-shop-btn:hover:not(:disabled) { background-color: var(--accent-color-dark); }

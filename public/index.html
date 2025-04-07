@@ -65,7 +65,7 @@
                          <button id="recolor-close-btn" class="close-btn" title="Close Recolor">X</button>
                          <h4>Splash Some Color!</h4>
                          <p id="recolor-item-name">Item: ???</p>
-                         <div id="recolor-swatches">
+                         <div id="recolor-swatches"> <!-- Container for color swatches -->
                              <p><i>Fetching colors...</i></p>
                          </div>
                          <button id="recolor-reset-btn" title="Reset to boring default color">Go Back!</button>
@@ -95,7 +95,9 @@
                         <p><i>Pockets seem empty...</i></p>
                     </div>
                     <div class="inventory-actions">
+                        <!-- Pickup Button -->
                         <button id="pickup-furni-btn" disabled title="Yoink! Pick up selected furniture (Delete/Backspace)">Yoink!</button>
+                        <!-- Recolor Button (initially hidden, enabled based on selection) -->
                         <button id="recolor-furni-btn" disabled style="display: none;" title="Recolor selected furniture">Paint It!</button>
                     </div>
                 </div>
@@ -108,8 +110,8 @@
 
     <!-- Load Socket.IO client library -->
     <script src="/socket.io/socket.io.js"></script>
-    <!-- Load Client Game Logic (Unchanged JS) -->
-    <script src="client.js"></script>
+    <!-- Load Client Game Logic (using ES Modules) -->
+    <script type="module" src="js/main.js"></script>
 </body>
 
 </html>
