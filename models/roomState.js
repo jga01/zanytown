@@ -1,4 +1,3 @@
-// models/roomState.js
 const mongoose = require("mongoose");
 
 const roomStateSchema = new mongoose.Schema(

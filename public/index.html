@@ -7,18 +7,26 @@
     <title>ZanyTown - Welcome!</title>
     <!-- Link to the updated stylesheet -->
     <link rel="stylesheet" href="style.css">
-    <!-- Google Fonts Import (moved inside style.css via @import) -->
+    <!-- Google Fonts Import (now handled in style.css via @import) -->
 </head>
 
 <body>
     <!-- App Wrapper for overall layout -->
     <div id="app-wrapper">
 
+        <!-- NEW: Loading Overlay (Visible by default) -->
+        <div id="loading-overlay">
+            <div id="loading-message">Initializing ZanyTown...</div>
+            <!-- Optional: Add a spinner element here -->
+            <!-- <div class="spinner"></div> -->
+        </div>
+        <!-- End Loading Overlay -->
+
         <!-- Header Bar -->
         <header id="main-header">
             <h1>🤪 ZanyTown! 🤪</h1>
             <div id="room-name-display" class="header-info">Room: Loading...</div>
-            <div id="player-currency" class="header-info">Silly Coins: 0</div>
+            <div id="player-currency" class="header-info">Silly Coins: ...</div>
             <button id="logout-btn" title="Log out and return to login screen">Bye Bye!</button>
         </header>
 
@@ -37,12 +45,12 @@
                  <div id="user-list-panel" class="ui-panel panel-column">
                      <h4>Who's Here?</h4>
                      <ul id="user-list-content">
-                         <li><i>Looking for people...</i></li>
+                         <li><i>Joining room...</i></li>
                      </ul>
                  </div>
                  <div id="coords-debug" class="ui-panel panel-column">
                      <h4>Nerd Stuff</h4>
-                     <div id="debug-content">Connecting...</div>
+                     <div id="debug-content">Initializing...</div>
                 </div>
             </aside>
 
@@ -92,7 +100,7 @@
                  <div id="inventory-panel" class="ui-panel panel-column">
                     <h4>Your Junk</h4>
                     <div id="inventory-items">
-                        <p><i>Pockets seem empty...</i></p>
+                        <p><i>Connecting...</i></p>
                     </div>
                     <div class="inventory-actions">
                         <!-- Pickup Button -->

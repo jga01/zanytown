@@ -49,6 +49,8 @@ export const uiState = {
   zoomInBtn: null,
   zoomOutBtn: null,
   toggleEditBtn: null,
+  loadingOverlay: null,
+  loadingMessage: null,
 
   // UI Data / Flags
   activeChatBubbles: [], // Stores { id, text, endTime, avatarId, element } for positioning/removal

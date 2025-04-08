@@ -50,6 +50,8 @@ export async function loadConfig() {
       SHOP_CLOSE_BTN_ID: "shop-close-btn",
       OPEN_SHOP_BTN_ID: "open-shop-btn",
       LOGOUT_BTN_ID: "logout-btn", // Added logout button ID
+      LOADING_OVERLAY_ID: "loading-overlay",
+      LOADING_MESSAGE_ID: "loading-message",
 
       // Gameplay/Visual Settings
       MIN_ZOOM: 0.3,

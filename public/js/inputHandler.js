@@ -1,6 +1,3 @@
-// public/js/inputHandler.js
-// Manages all user input (keyboard, mouse) and triggers actions.
-
 import { gameState, uiState, camera } from "./gameState.js";
 import { SHARED_CONFIG, CLIENT_CONFIG } from "./config.js";
 import { snapToGrid, isoToWorld, rotateDirection } from "./utils.js";
