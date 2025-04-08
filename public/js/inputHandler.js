@@ -125,7 +125,7 @@ export function setupInputListeners() {
   );
   uiState.toggleEditBtn?.addEventListener("click", toggleEditMode);
   uiState.pickupFurniBtn?.addEventListener("click", handlePickupFurniClick); // Uses uiManager handler
-  uiState.recolorBtn?.addEventListener("click", handleRecolorFurniClick); // Uses uiManager handler
+  uiState.recolorFurniBtn?.addEventListener("click", handleRecolorFurniClick); // Uses uiManager handler
   uiState.profileCloseBtn?.addEventListener("click", hideProfilePanel);
   uiState.recolorCloseBtn?.addEventListener("click", hideRecolorPanel);
   uiState.recolorResetBtn?.addEventListener("click", handleRecolorResetClick);
