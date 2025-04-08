@@ -279,6 +279,7 @@ body {
 #chat-log p.error-msg { color: var(--text-error); font-weight: 600; }
 #chat-log p.server-msg { color: var(--accent-color-purple); font-weight: 600; }
 #chat-log p.self-msg { color: var(--text-success); font-weight: 600; }
+/* Ensure admin-msg style exists */
 #chat-log p.admin-msg { color: var(--text-highlight); font-weight: 600; font-family: var(--font-header);}
 #chat-log p.announcement-msg {
     color: #ff1493; /* Deep Pink */
@@ -643,6 +644,94 @@ button:disabled {
     opacity: 0.7;
 }
 
+/* --- START: Admin Panel Styles --- */
+#admin-controls {
+    border-color: var(--text-highlight); /* Orange border for admin */
+    background-color: rgba(255, 224, 180, 0.95); /* Light orange */
+}
+#admin-controls h4 {
+    color: var(--text-error); /* Red header */
+    border-color: var(--text-error);
+}
+#admin-controls button { /* Specific styles for buttons inside admin panel */
+     background-color: var(--accent-color-orange);
+     border-color: var(--accent-color-orange-dark);
+     color: black;
+     margin-bottom: 8px; /* Add some space below buttons */
+     width: 100%; /* Make buttons full width */
+}
+ #admin-controls button:hover:not(:disabled) {
+     background-color: var(--accent-color-orange-dark);
+ }
+
+/* Styles for sections within the admin panel */
+.admin-section {
+    margin-top: 15px;
+    border-top: 2px dashed rgba(220, 20, 60, 0.4); /* Crimson dashed */
+    padding-top: 10px;
+}
+.admin-section h5 {
+    margin-bottom: 8px;
+    font-size: 1em;
+    color: #663300; /* Brownish */
+    font-weight: 600;
+}
+
+/* Room List Box */
+.admin-list-box {
+    max-height: 120px; /* Limit height */
+    overflow-y: auto;
+    background: rgba(255, 255, 255, 0.7);
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--accent-color-orange-dark);
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+.admin-list-box::-webkit-scrollbar { width: 8px; }
+.admin-list-box::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 3px; }
+.admin-list-box::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 3px; }
+
+.admin-list-box ul { list-style: none; padding: 0; margin: 0; }
+.admin-list-box li {
+    padding: 4px 6px;
+    font-size: 0.9em;
+    border-bottom: 1px dotted #ccc;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+.admin-list-box li:last-child { border-bottom: none; }
+.admin-list-box li:hover { background-color: var(--accent-color-blue); color: white; }
+.admin-list-box i { color: var(--text-secondary); } /* Italic loading text */
+
+/* Layout Tile Type Selector */
+.admin-radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px 15px; /* Row gap, Column gap */
+    font-size: 0.9em;
+    margin-bottom: 5px;
+}
+.admin-radio-group label {
+    display: inline-flex; /* Align radio and text */
+    align-items: center;
+    cursor: pointer;
+}
+.admin-radio-group input[type="radio"] {
+    margin-right: 5px;
+    cursor: pointer;
+}
+
+/* Instruction Text */
+.admin-instruction {
+    font-size: 0.85em;
+    margin-top: 8px;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+/* --- END: Admin Panel Styles --- */
+
+
 /* --- Flash Animations --- */
 .flash-green { animation: flashGreen 0.6s ease-out; }
 .flash-red { animation: flashRed 0.6s ease-out; }
@@ -672,6 +761,9 @@ button:disabled {
     color: #e0f7fa; /* Light text color */
     font-family: var(--font-header);
     transition: opacity 0.3s ease-out; /* Smooth fade out */
+    /* Make sure it's visible initially */
+    opacity: 1;
+    pointer-events: auto;
 }
 
 #loading-message {
@@ -722,7 +814,8 @@ button:disabled {
         flex-direction: row; /* Sidebars become horizontal toolbars */
         overflow-x: auto;
         overflow-y: hidden;
-        height: auto;
+        height: auto; /* Auto height for horizontal */
+        min-height: 120px; /* Minimum height */
         padding: 8px;
         border: none;
         border-top: 2px solid var(--border-color);
@@ -733,11 +826,20 @@ button:disabled {
     .sidebar .ui-panel { /* Panels inside horizontal sidebar */
        width: 180px; /* Adjust width for horizontal items */
        flex-shrink: 0;
-       height: 110px; /* Example height */
+       /* height: 110px; Example height */
+       height: 100%; /* Let panel fill sidebar height */
        overflow: hidden;
+       font-size: 12px; /* Slightly smaller font in horizontal sidebar */
     }
     .sidebar .panel-column { height: 100%; } /* Ensure vertical panels fill */
-    #inventory-items, #user-list-content, #debug-content { height: auto; flex-grow: 1; }
+    #inventory-items, #user-list-content, #debug-content, .admin-list-box {
+        height: auto;
+        flex-grow: 1;
+        font-size: 11px; /* Smaller text in scroll boxes */
+        max-height: none; /* Remove max-height for horizontal view */
+     }
+    .admin-radio-group label { font-size: 11px; } /* Smaller radio labels */
+     .admin-instruction { display: none; } /* Hide instructions on mobile */
 
     #game-world { order: -1; } /* Move game world to top on mobile */
     #left-sidebar { border: none; order: 1; }
@@ -753,5 +855,7 @@ button:disabled {
 
 @media (max-height: 550px) and (max-width: 768px) { /* Mobile Landscape */
      #chat-area { height: 120px; }
-     .sidebar .ui-panel { height: 90px; width: 160px; }
+     .sidebar { min-height: 100px; }
+     .sidebar .ui-panel { width: 160px; }
+     .admin-radio-group { gap: 5px 10px; }
 }

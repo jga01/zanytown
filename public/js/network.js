@@ -1,6 +1,6 @@
 import { SHARED_CONFIG, CLIENT_CONFIG } from "./config.js";
 import { gameState, uiState, camera } from "./gameState.js";
-import { resetLocalState } from "./main.js"; // Import the main reset function
+import { resetLocalState } from "./main.js"; // Import the main reset function for disconnects
 import {
   logChatMessage,
   updateUserListPanel,
@@ -17,9 +17,11 @@ import {
   updateRecolorButtonState,
   updateInventorySelection,
   updateUICursor,
-  centerCameraOnRoom, // <-- Import the camera centering function
-  showLoadingOverlay, // <-- Import loading overlay helper
-  hideLoadingOverlay, // <-- Import loading overlay helper
+  centerCameraOnRoom,
+  showLoadingOverlay, // For explicit loading state control
+  hideLoadingOverlay, // For hiding overlay after load
+  updateAdminUI, // To update admin controls visibility/state
+  updateAdminRoomList, // To populate the admin room list
 } from "./uiManager.js";
 import { playSound } from "./sounds.js";
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js";
@@ -28,60 +30,64 @@ import { ClientFurniture } from "./gameObjects/ClientFurniture.js";
 
 let socket = null;
 
-/** Establishes connection to the server. Returns true if attempt started, false otherwise. */
+/**
+ * Establishes a Socket.IO connection to the server using the stored auth token.
+ * Handles token checks and redirects to login if necessary.
+ * @returns {boolean} True if the connection attempt was initiated, false otherwise.
+ */
 export function connectToServer() {
   const token = localStorage.getItem("authToken");
   if (!token) {
     console.log("No auth token found, directing to login.");
-    // Use loading overlay for feedback before redirect
     showLoadingOverlay("Auth token missing. Redirecting...");
-    // Allow time for message to show before redirect
     setTimeout(() => {
       window.location.href = "/login.html";
     }, 1500);
     return false;
   }
 
-  // Disconnect existing socket if any (prevents multiple connections)
+  // Prevent multiple connections
   if (socket && socket.connected) {
-    console.log(
-      "connectToServer called but socket already exists. Disconnecting old one first."
-    );
+    console.warn("connectToServer called but socket already connected.");
+    return true; // Already connected or attempting
+  }
+  if (socket) {
+    console.log("Disconnecting existing socket before reconnecting...");
     socket.disconnect();
     socket = null;
   }
 
   try {
-    showLoadingOverlay("Connecting to Server..."); // Show connecting message
-    // Connect with authentication token
-    socket = io({ auth: { token: token } }); // Use io() globally available from script tag
-    setupSocketListeners(); // Setup listeners *before* connect event fires
+    showLoadingOverlay("Connecting to Server...");
+    // Initialize the connection with authentication
+    socket = io({ auth: { token: token } }); // io() is global from the script include
+    setupSocketListeners(); // Setup listeners immediately
     return true; // Indicate connection attempt started
   } catch (err) {
     console.error("Failed to initialize Socket.IO:", err);
-    showLoadingOverlay("Error: Connection Failed. Check console."); // Show error on overlay
+    showLoadingOverlay("Error: Connection Failed. Check console.");
     if (uiState.debugDiv) uiState.debugDiv.textContent = "Connection Error";
-    return false; // Indicate connection failure
+    return false; // Indicate failure
   }
 }
 
-/** Returns true if the socket is currently connected. */
+/** Checks if the socket is currently connected. */
 export function isConnected() {
   return socket?.connected || false;
 }
 
-/** Disconnects the socket. */
+/** Disconnects the current socket connection. */
 export function disconnectSocket() {
   if (socket) {
     console.log("Disconnecting socket...");
     socket.disconnect();
-    socket = null; // Clear reference
+    socket = null;
   }
 }
 
-// --- Emit Functions (Wrappers around socket.emit) ---
+// --- Emit Functions (Client -> Server) ---
 
-/** Safely emits an event if connected. */
+/** Safely emits an event via the socket if connected. */
 function emitIfConnected(event, data) {
   if (isConnected()) {
     socket.emit(event, data);
@@ -90,9 +96,7 @@ function emitIfConnected(event, data) {
       `Attempted to emit "${event}" while disconnected. Data:`,
       data
     );
-    // Provide user feedback via chat/log
     logChatMessage("Not connected to server.", true, "error-msg");
-    // Optional: Could flash an error indicator
   }
 }
 
@@ -111,15 +115,15 @@ export function requestPlaceFurni(definitionId, x, y, rotation) {
 }
 
 export function requestRotateFurni(furniId) {
-  emitIfConnected("request_rotate_furni", { furniId: String(furniId) }); // Ensure string ID
+  emitIfConnected("request_rotate_furni", { furniId: String(furniId) });
 }
 
 export function requestPickupFurni(furniId) {
-  emitIfConnected("request_pickup_furni", { furniId: String(furniId) }); // Ensure string ID
+  emitIfConnected("request_pickup_furni", { furniId: String(furniId) });
 }
 
 export function requestSit(furniId) {
-  emitIfConnected("request_sit", { furniId: String(furniId) }); // Ensure string ID
+  emitIfConnected("request_sit", { furniId: String(furniId) });
 }
 
 export function requestStand() {
@@ -131,17 +135,17 @@ export function requestUserList() {
 }
 
 export function requestProfile(avatarId) {
-  emitIfConnected("request_profile", { avatarId: String(avatarId) }); // Ensure string ID
+  emitIfConnected("request_profile", { avatarId: String(avatarId) });
 }
 
 export function requestUseFurni(furniId) {
-  emitIfConnected("request_use_furni", { furniId: String(furniId) }); // Ensure string ID
+  emitIfConnected("request_use_furni", { furniId: String(furniId) });
 }
 
 export function requestRecolorFurni(furniId, colorHex) {
   emitIfConnected("request_recolor_furni", {
-    furniId: String(furniId), // Ensure string ID
-    colorHex: colorHex ?? "", // Ensure value is passed (empty for reset)
+    furniId: String(furniId),
+    colorHex: colorHex ?? "",
   });
 }
 
@@ -149,53 +153,90 @@ export function requestBuyItem(itemId) {
   emitIfConnected("request_buy_item", { itemId });
 }
 
-// Modified to show loading state immediately
+// Shows loading overlay immediately before sending request
 export function requestChangeRoom(targetRoomId, targetX, targetY) {
   const data = { targetRoomId };
   if (typeof targetX === "number" && typeof targetY === "number") {
     data.targetX = targetX;
     data.targetY = targetY;
   }
-  showLoadingOverlay(`Joining Room: ${targetRoomId}...`); // Show overlay before sending request
+  showLoadingOverlay(`Joining Room: ${targetRoomId}...`);
   emitIfConnected("request_change_room", data);
 }
 
-// --- Socket Event Listeners ---
+// --- NEW Admin Emitters ---
+export function requestCreateRoom(roomId, cols, rows) {
+  const data = { roomId };
+  if (cols) data.cols = cols;
+  if (rows) data.rows = rows;
+  emitIfConnected("request_create_room", data);
+}
+
+export function requestModifyLayout(roomId, x, y, type) {
+  // Server uses socket's current room, roomId isn't strictly needed but can be explicit
+  // emitIfConnected('request_modify_layout', { roomId, x, y, type });
+  emitIfConnected("request_modify_layout", { x, y, type });
+}
+
+export function requestAllRoomIds() {
+  emitIfConnected("request_all_room_ids");
+}
+
+// --- Socket Event Listeners (Server -> Client) ---
+
+/** Sets up all listeners for events received from the server. */
 async function setupSocketListeners() {
   if (!socket) {
     console.error("Socket not initialized before setting up listeners.");
     return;
   }
 
+  // Remove existing listeners to prevent duplicates if re-connecting
+  socket.off("connect");
+  socket.off("disconnect");
+  socket.off("room_state");
+  socket.off("your_avatar_id");
+  socket.off("avatar_added");
+  socket.off("avatar_removed");
+  socket.off("avatar_update");
+  socket.off("furni_added");
+  socket.off("furni_removed");
+  socket.off("furni_updated");
+  socket.off("inventory_update");
+  socket.off("currency_update");
+  socket.off("user_list_update");
+  socket.off("show_profile");
+  socket.off("chat_message");
+  socket.off("action_failed");
+  socket.off("connect_error");
+  socket.off("auth_error");
+  socket.off("force_disconnect");
+  socket.off("layout_tile_update"); // NEW
+  socket.off("all_room_ids_update"); // NEW
+
   // --- Connection Lifecycle ---
   socket.on("connect", () => {
     console.log("Connected to server with ID:", socket.id);
-    // Update loading message, overlay stays until room_state received
     showLoadingOverlay("Connected. Waiting for Player Data...");
     if (uiState.debugDiv) uiState.debugDiv.textContent = "Connected...";
     logChatMessage("Connected to server!", true, "info-msg");
-    // Buttons enabled later by room_state or other updates
   });
 
   socket.on("disconnect", (reason) => {
     console.log("Disconnected from server. Reason:", reason);
-    // Show overlay with disconnect reason
     showLoadingOverlay(`Disconnected: ${reason}. Please refresh.`);
     if (uiState.debugDiv)
       uiState.debugDiv.textContent = `Disconnected: ${reason}`;
-    // resetLocalState() implicitly shows "Loading Room...", but the overlay already has the disconnect reason.
-    // We still need to reset the game state internally.
-    resetLocalState(); // Clears game state, shows overlay briefly
-    // Ensure the disconnect message persists on the overlay
-    showLoadingOverlay(`Disconnected: ${reason}. Please refresh.`);
+    resetLocalState(); // Reset client game state
+    showLoadingOverlay(`Disconnected: ${reason}. Please refresh.`); // Re-show disconnect message
     gameState.myAvatarId = null;
     socket = null; // Clear socket reference
-
-    // Disable UI interaction buttons
+    // Disable UI buttons
     uiState.openShopBtn?.setAttribute("disabled", "true");
     uiState.toggleEditBtn?.setAttribute("disabled", "true");
     uiState.pickupFurniBtn?.setAttribute("disabled", "true");
     uiState.recolorFurniBtn?.setAttribute("disabled", "true");
+    updateAdminUI(); // Hide admin controls on disconnect
   });
 
   // --- Core Game State Sync ---
@@ -206,16 +247,12 @@ async function setupSocketListeners() {
     );
     if (!CLIENT_CONFIG || !state || state.id == null || !state.layout) {
       console.error("Received invalid room_state:", state);
-      // Show error on overlay and stop processing
       showLoadingOverlay("Error: Invalid room data received.");
       return;
     }
-    console.log(`Received room_state for room: ${state.id}`);
-    // Update overlay message while processing
-    showLoadingOverlay("Initializing Room...");
+    showLoadingOverlay("Initializing Room..."); // Update overlay message
 
-    // Reset local state *specifically for room data* before applying new state
-    // Avoid full resetUIState() here as it shows "Loading Room..." again
+    // --- Partial Reset (Keep global state like inventory/currency) ---
     gameState.furniture = {};
     gameState.avatars = {};
     gameState.clientTiles = [];
@@ -246,14 +283,13 @@ async function setupSocketListeners() {
       uiState.toggleEditBtn.textContent = `Make Stuff? (Off)`;
       uiState.toggleEditBtn.classList.remove("active");
     }
+    // --- End Partial Reset ---
 
-    // Apply new room state data to gameState
     gameState.currentRoomId = state.id;
     gameState.roomLayout = state.layout;
     gameState.roomCols = state.cols || state.layout[0]?.length || 0;
     gameState.roomRows = state.rows || state.layout.length;
 
-    // Update UI elements displaying room info
     if (uiState.roomNameDisplay)
       uiState.roomNameDisplay.textContent = `Room: ${state.id}`;
     document.title = `ZanyTown - ${state.id}`;
@@ -276,18 +312,18 @@ async function setupSocketListeners() {
         try {
           gameState.furniture[String(dto.id)] = new ClientFurniture(dto);
         } catch (e) {
-          console.error(`Error creating ClientFurniture for DTO:`, dto, e);
+          console.error(`Error creating ClientFurniture:`, dto, e);
         }
-      } else console.warn("Received invalid furniture DTO in room_state:", dto);
+      } else console.warn("Invalid furniture DTO in room_state:", dto);
     });
 
-    // Process avatars
+    // Process avatars (and identify player)
     state.avatars?.forEach((dto) => {
       if (dto && dto.id != null) {
         try {
           const avatarIdStr = String(dto.id);
           const avatarInstance = new ClientAvatar(dto);
-          // Check if this is our avatar (using gameState.myAvatarId which should be set by now)
+          // Check if this is our avatar (gameState.myAvatarId should be set by your_avatar_id)
           if (
             gameState.myAvatarId &&
             avatarInstance.id === gameState.myAvatarId
@@ -296,57 +332,50 @@ async function setupSocketListeners() {
             console.log(
               `[room_state] Identified MY AVATAR: ${dto.name} (ID: ${avatarIdStr})`
             );
+            updateAdminUI(); // Update admin controls based on player status
           }
           gameState.avatars[avatarIdStr] = avatarInstance;
         } catch (e) {
-          console.error(`Error creating ClientAvatar for DTO:`, dto, e);
+          console.error(`Error creating ClientAvatar:`, dto, e);
         }
-      } else console.warn("Received invalid avatar DTO in room_state:", dto);
+      } else console.warn("Invalid avatar DTO in room_state:", dto);
     });
 
-    // --- Trigger Camera Centering ---
-    centerCameraOnRoom();
-
-    // --- HIDE OVERLAY ---
-    hideLoadingOverlay(); // Hide overlay AFTER processing is complete
+    centerCameraOnRoom(); // Center camera on the new room
+    hideLoadingOverlay(); // Hide overlay AFTER processing complete
 
     logChatMessage(`Entered room: ${state.id}`, true, "info-msg");
     if (uiState.debugDiv)
       uiState.debugDiv.textContent = `Room '${state.id}' loaded.`;
 
-    // Enable buttons now that room is loaded
+    // Enable buttons
     uiState.openShopBtn?.removeAttribute("disabled");
     uiState.toggleEditBtn?.removeAttribute("disabled");
-    // Other buttons (pickup/recolor) depend on edit state, handled elsewhere
+    // Pickup/Recolor buttons depend on edit state/selection, handled elsewhere
 
-    // Refresh UI (Inventory might depend on a separate update event, call here as fallback)
-    populateInventory();
-    updateCurrencyDisplay(); // Currency might also be separate, but refresh just in case
-    updateShopButtonStates();
-    // User list update often happens after join ack or your_avatar_id
+    // Refresh UI elements that might depend on room state or player avatar
+    populateInventory(); // Refresh inventory display
+    updateCurrencyDisplay(); // Refresh currency display
+    updateShopButtonStates(); // Refresh shop button states
+    updateUserListPanel(state.avatars || []); // Populate user list immediately
+    updateAdminUI(); // Ensure admin UI visibility is correct
   });
 
   socket.on("your_avatar_id", (id) => {
     const myIdString = String(id);
     console.log("DEBUG: Received your_avatar_id:", myIdString);
     gameState.myAvatarId = myIdString;
-
-    // Update isPlayer flag for all currently loaded avatars
-    Object.values(gameState.avatars).forEach((av) => {
-      if (av instanceof ClientAvatar) av.checkIfPlayer();
-    });
-    // Request user list now that we know who we are
-    requestUserList();
-    // Can update loading message if overlay is somehow still visible
-    // showLoadingOverlay("Player Ready. Waiting for Room Data...");
+    // Update isPlayer flag for the avatar if already present (race condition handling)
+    if (gameState.avatars[myIdString]) {
+      gameState.avatars[myIdString].checkIfPlayer();
+      updateAdminUI(); // Update admin UI now that we know if player is admin
+    }
+    requestUserList(); // Request user list now
   });
 
   // --- Incremental Updates & Events ---
-  // (avatar_added, avatar_removed, avatar_update, furni_added, etc. remain the same)
-  // These handlers should NOT interact with the loading overlay.
-
   socket.on("avatar_added", (avatarDTO) => {
-    console.log("DEBUG: Received avatar_added:", JSON.stringify(avatarDTO));
+    // console.log("DEBUG: Received avatar_added:", JSON.stringify(avatarDTO));
     if (
       !avatarDTO ||
       avatarDTO.id == null ||
@@ -357,7 +386,7 @@ async function setupSocketListeners() {
     if (!gameState.avatars[avatarIdStr]) {
       try {
         const newAvatar = new ClientAvatar(avatarDTO);
-        newAvatar.checkIfPlayer();
+        newAvatar.checkIfPlayer(); // Check if this is the player avatar
         gameState.avatars[avatarIdStr] = newAvatar;
         console.log(`Avatar added: ${avatarDTO.name} (ID: ${avatarIdStr})`);
         requestUserList(); // Update user list
@@ -369,37 +398,38 @@ async function setupSocketListeners() {
         );
       }
     } else {
-      gameState.avatars[avatarIdStr].update(avatarDTO); // Update if exists (e.g., quick rejoin)
-      console.warn(
-        `Received 'avatar_added' for existing ID ${avatarIdStr}. Updated.`
-      );
+      gameState.avatars[avatarIdStr].update(
+        avatarDTO
+      ); /* ... update existing ... */
     }
   });
 
   socket.on("avatar_removed", (data) => {
-    console.log("DEBUG: Received avatar_removed:", JSON.stringify(data));
+    // console.log("DEBUG: Received avatar_removed:", JSON.stringify(data));
     if (!data || data.id == null) return;
     const avatarIdStr = String(data.id);
     const removedAvatar = gameState.avatars[avatarIdStr];
     if (removedAvatar) {
       console.log(`Avatar removed: ${removedAvatar.name} (${avatarIdStr})`);
-      removedAvatar.clearBubble?.(); // Clear bubble if exists
+      removedAvatar.clearBubble?.();
       delete gameState.avatars[avatarIdStr];
-      requestUserList(); // Update user list
+      requestUserList();
       if (uiState.profilePanel?.dataset.targetId === avatarIdStr)
-        hideProfilePanel(); // Close profile if viewing removed user
+        hideProfilePanel();
     }
   });
 
   socket.on("avatar_update", (avatarDTO) => {
-    // console.log("DEBUG: Received avatar_update:", JSON.stringify(avatarDTO)); // Can be noisy
+    // console.log("DEBUG: Received avatar_update:", JSON.stringify(avatarDTO)); // Noisy
     if (!avatarDTO || avatarDTO.id == null) return;
     const avatarIdStr = String(avatarDTO.id);
     const avatar = gameState.avatars[avatarIdStr];
     if (avatar instanceof ClientAvatar) {
       const oldState = avatar.state;
+      const oldName = avatar.name; // Track name changes
+      const oldIsAdmin = avatar.isAdmin; // Track admin status changes
       avatar.update(avatarDTO);
-      // Play sounds for state changes for OTHER avatars
+      // Play sounds for *other* avatars' state changes
       if (avatarIdStr !== gameState.myAvatarId) {
         if (
           avatar.state === SHARED_CONFIG.AVATAR_STATE_WALKING &&
@@ -416,13 +446,20 @@ async function setupSocketListeners() {
           if (emoteDef?.sound) playSound(emoteDef.sound);
         }
       }
-      // Update user list if name changed (though names shouldn't change often)
-      if (avatarDTO.name && avatar.name !== avatarDTO.name) requestUserList();
+      // Update admin UI if player's admin status changed
+      if (
+        avatarIdStr === gameState.myAvatarId &&
+        oldIsAdmin !== avatar.isAdmin
+      ) {
+        updateAdminUI();
+      }
+      // Update user list if name changed
+      if (avatarDTO.name && oldName !== avatar.name) requestUserList();
     }
   });
 
   socket.on("furni_added", (furniDTO) => {
-    console.log("DEBUG: Received furni_added:", JSON.stringify(furniDTO));
+    // console.log("DEBUG: Received furni_added:", JSON.stringify(furniDTO));
     if (!furniDTO || furniDTO.id == null) return;
     const furniIdStr = String(furniDTO.id);
     let isNew = false;
@@ -438,16 +475,15 @@ async function setupSocketListeners() {
         );
       }
     } else {
-      gameState.furniture[furniIdStr].update(furniDTO);
-      console.warn(
-        `Received 'furni_added' for existing ID ${furniIdStr}. Updated.`
-      );
+      gameState.furniture[furniIdStr].update(
+        furniDTO
+      ); /* ... update existing ... */
     }
-    if (isNew) playSound("place"); // Sound feedback for placement
+    if (isNew) playSound("place");
   });
 
   socket.on("furni_removed", (data) => {
-    console.log("DEBUG: Received furni_removed:", JSON.stringify(data));
+    // console.log("DEBUG: Received furni_removed:", JSON.stringify(data));
     if (!data || data.id == null) return;
     const furniIdStr = String(data.id);
     const removedFurni = gameState.furniture[furniIdStr];
@@ -458,22 +494,21 @@ async function setupSocketListeners() {
         } (ID: ${furniIdStr})`
       );
       if (uiState.editMode.selectedFurnitureId === furniIdStr)
-        setSelectedFurniture(null); // Deselect if removed
-      if (uiState.activeRecolorFurniId === furniIdStr) hideRecolorPanel(); // Close recolor if removed
+        setSelectedFurniture(null);
+      if (uiState.activeRecolorFurniId === furniIdStr) hideRecolorPanel();
       delete gameState.furniture[furniIdStr];
-      // Maybe play pickup sound for feedback? playSound('pickup');
+      // playSound('pickup'); // Optional pickup sound
     }
   });
 
   socket.on("furni_updated", (updateData) => {
-    console.log("DEBUG: Received furni_updated:", JSON.stringify(updateData));
+    // console.log("DEBUG: Received furni_updated:", JSON.stringify(updateData));
     if (!updateData || updateData.id == null) return;
     const furniIdStr = String(updateData.id);
     const furni = gameState.furniture[furniIdStr];
     if (furni instanceof ClientFurniture) {
       const oldState = furni.state;
       furni.update(updateData);
-      // Play sound on use state change
       if (
         updateData.state !== undefined &&
         oldState !== updateData.state &&
@@ -484,71 +519,91 @@ async function setupSocketListeners() {
     }
   });
 
+  // --- Layout Update Listener ---
+  socket.on("layout_tile_update", (data) => {
+    // console.log("DEBUG: Received layout_tile_update:", JSON.stringify(data));
+    if (!data || data.x == null || data.y == null || data.type == null) {
+      /* ... error handling ... */ return;
+    }
+    const tile = gameState.clientTiles?.find(
+      (t) => t.x === data.x && t.y === data.y
+    );
+    if (tile instanceof ClientTile) {
+      tile.layoutType = data.type;
+      tile._setBaseColor(); // Update visual
+      // If placing item, re-validate placement after layout change
+      if (
+        uiState.isEditMode &&
+        uiState.editMode.state === CLIENT_CONFIG?.EDIT_STATE_PLACING
+      ) {
+        updateHighlights();
+      }
+    } else {
+      /* ... error handling ... */
+    }
+  });
+
   // --- User/Global State Updates ---
   socket.on("inventory_update", (inventoryData) => {
-    console.log(
-      "DEBUG: Received inventory_update:",
-      JSON.stringify(inventoryData)
-    );
+    // console.log("DEBUG: Received inventory_update:", JSON.stringify(inventoryData));
     gameState.inventory =
       typeof inventoryData === "object" && inventoryData !== null
         ? inventoryData
         : {};
-    populateInventory(); // Refresh inventory UI
-    updateShopButtonStates(); // Shop buttons depend on inventory/currency
+    populateInventory();
+    updateShopButtonStates(); // Check if purchase now possible/impossible
   });
 
   socket.on("currency_update", (data) => {
-    console.log("DEBUG: Received currency_update:", JSON.stringify(data));
+    // console.log("DEBUG: Received currency_update:", JSON.stringify(data));
     if (data && typeof data.currency === "number") {
       gameState.myCurrency = data.currency;
-      updateCurrencyDisplay(); // Refresh currency UI
-      updateShopButtonStates(); // Shop buttons depend on currency
+      updateCurrencyDisplay();
+      updateShopButtonStates(); // Check if purchase now possible/impossible
     } else console.warn("Received invalid currency update:", data);
   });
 
   socket.on("user_list_update", (users) => {
-    console.log(
-      "DEBUG: Received user_list_update:",
-      users ? `${users.length} users` : "INVALID DATA"
-    );
-    updateUserListPanel(users || []); // Refresh user list UI
+    // console.log("DEBUG: Received user_list_update:", users ? `${users.length} users` : "INVALID DATA");
+    updateUserListPanel(users || []);
   });
 
   socket.on("show_profile", (profileData) => {
-    console.log("DEBUG: Received show_profile:", JSON.stringify(profileData));
+    // console.log("DEBUG: Received show_profile:", JSON.stringify(profileData));
     if (!profileData || !profileData.id) return;
-    showProfilePanel(profileData); // Show profile UI
+    showProfilePanel(profileData);
+  });
+
+  // --- Admin Room List Update ---
+  socket.on("all_room_ids_update", (roomIds) => {
+    // console.log("DEBUG: Received all_room_ids_update:", roomIds);
+    if (Array.isArray(roomIds)) {
+      updateAdminRoomList(roomIds);
+    } else {
+      console.warn("Received invalid data for all_room_ids_update:", roomIds);
+    }
   });
 
   // --- Chat & Feedback ---
   socket.on("chat_message", (data) => {
-    console.log("DEBUG: Received chat_message:", JSON.stringify(data));
+    // console.log("DEBUG: Received chat_message:", JSON.stringify(data));
     if (!data || typeof data.text !== "string") return;
-
     const avatarIdStr = data.avatarId ? String(data.avatarId) : null;
     const avatar = avatarIdStr ? gameState.avatars[avatarIdStr] : null;
     const senderName = avatar ? avatar.name : data.avatarName || "Unknown";
-    const messageText = data.avatarId
-      ? `${senderName}: ${data.text}`
-      : data.text; // Prepend sender name if from avatar
+    const messageText = avatarIdStr ? `${senderName}: ${data.text}` : data.text; // Prepend sender name
     let messageClass = data.className || "";
     const receivedIsAdmin = data.isAdmin || false;
 
-    // Display chat bubble if from an avatar
     if (avatar instanceof ClientAvatar) {
-      avatar.say?.(data.text); // Let avatar handle bubble data creation
-      if (avatarIdStr !== gameState.myAvatarId) playSound("chat"); // Play sound for others' messages
+      avatar.say?.(data.text); // Display bubble
+      if (avatarIdStr !== gameState.myAvatarId) playSound("chat"); // Sound for others
     } else {
-      // Play sound for non-avatar messages like Server/Admin/Announce
       playSound("chat");
-    }
+    } // Sound for server/announce
 
-    // Add admin styling if applicable
     if (receivedIsAdmin && data.avatarName !== "Admin")
-      messageClass += " admin-msg";
-
-    // Log message to the chat box
+      messageClass += " admin-msg"; // Style admin chat
     logChatMessage(
       messageText,
       avatarIdStr === gameState.myAvatarId,
@@ -558,29 +613,21 @@ async function setupSocketListeners() {
 
   socket.on("action_failed", (data) => {
     console.warn("DEBUG: Received action_failed:", JSON.stringify(data));
-    console.warn(
-      `Action Failed: ${data.action}. Reason: ${
-        data.reason || "No reason specified"
-      }`
-    );
     logChatMessage(
       `Action failed: ${data.reason || "Unknown error"}`,
       true,
       "error-msg"
     );
-    // Optional: Play an error sound
-    // playSound('error');
+    // playSound('error'); // Optional error sound
   });
 
   // --- Error Handling & Disconnects ---
   socket.on("connect_error", (err) => {
     console.error(`DEBUG: Received connect_error: ${err.message}`);
     console.error(`Connection Error: ${err.message}`);
-    // Show error on overlay and trigger disconnect logic
     showLoadingOverlay(
       `Connection Error: ${err.message}. Please refresh or check console.`
     );
-    // Disconnect logic handles state reset and UI updates
     const msgLower = err.message.toLowerCase();
     if (
       msgLower.includes("invalid token") ||
@@ -588,7 +635,6 @@ async function setupSocketListeners() {
       msgLower.includes("token expired")
     ) {
       localStorage.removeItem("authToken");
-      // Add a delay before redirecting to allow user to see message
       setTimeout(() => {
         window.location.href = "/login.html";
       }, 2500);
@@ -602,10 +648,10 @@ async function setupSocketListeners() {
     console.error("Authentication Error:", message);
     showLoadingOverlay(`Authentication Error: ${message}. Redirecting...`);
     localStorage.removeItem("authToken");
-    disconnectSocket(); // Disconnect client-side explicitly
+    disconnectSocket();
     setTimeout(() => {
       window.location.href = "/login.html";
-    }, 2500); // Redirect after delay
+    }, 2500);
     socket = null;
   });
 
@@ -614,10 +660,10 @@ async function setupSocketListeners() {
     console.warn("Forcefully disconnected by server:", reason);
     showLoadingOverlay(`Disconnected: ${reason}. Redirecting...`);
     localStorage.removeItem("authToken");
-    disconnectSocket(); // Ensure socket is closed client-side
+    disconnectSocket();
     setTimeout(() => {
       window.location.href = "/login.html";
-    }, 2500); // Redirect to login after delay
+    }, 2500);
     socket = null;
   });
-} // end setupSocketListeners
+} // --- End setupSocketListeners ---

@@ -5,20 +5,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ZanyTown - Welcome!</title>
-    <!-- Link to the updated stylesheet -->
     <link rel="stylesheet" href="style.css">
-    <!-- Google Fonts Import (now handled in style.css via @import) -->
+    <!-- Google Fonts Import handled in style.css -->
 </head>
 
 <body>
     <!-- App Wrapper for overall layout -->
     <div id="app-wrapper">
 
-        <!-- NEW: Loading Overlay (Visible by default) -->
+        <!-- Loading Overlay (Visible by default via CSS) -->
         <div id="loading-overlay">
             <div id="loading-message">Initializing ZanyTown...</div>
-            <!-- Optional: Add a spinner element here -->
-            <!-- <div class="spinner"></div> -->
+            <!-- Optional: <div class="spinner"></div> -->
         </div>
         <!-- End Loading Overlay -->
 
@@ -48,6 +46,32 @@
                          <li><i>Joining room...</i></li>
                      </ul>
                  </div>
+
+                 <!-- START: Admin Controls Panel (Hidden by default) -->
+                 <div id="admin-controls" class="ui-panel panel-column" style="display: none;">
+                    <h4>Admin Powers</h4>
+                    <button id="create-room-btn" title="Create a new empty room">Create Room</button>
+
+                    <div id="admin-room-section" class="admin-section">
+                        <h5>Available Rooms</h5>
+                        <div id="admin-room-list" class="admin-list-box">
+                            <i>Loading rooms...</i>
+                        </div>
+                    </div>
+
+                    <div id="admin-layout-edit-section" class="admin-section">
+                        <h5>Layout Paint Type</h5>
+                        <div id="admin-layout-tile-type" class="admin-radio-group">
+                            <label><input type="radio" name="layout-paint-type" value="0" checked> Floor</label>
+                            <label><input type="radio" name="layout-paint-type" value="1"> Wall</label>
+                            <label><input type="radio" name="layout-paint-type" value="2"> AltFloor</label>
+                            <label><input type="radio" name="layout-paint-type" value="X"> Hole</label>
+                        </div>
+                         <p class="admin-instruction">(In Edit Mode, click tiles on map to paint)</p>
+                    </div>
+                 </div>
+                 <!-- END: Admin Controls Panel -->
+
                  <div id="coords-debug" class="ui-panel panel-column">
                      <h4>Nerd Stuff</h4>
                      <div id="debug-content">Initializing...</div>

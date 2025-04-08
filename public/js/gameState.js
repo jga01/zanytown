@@ -51,6 +51,7 @@ export const uiState = {
   toggleEditBtn: null,
   loadingOverlay: null,
   loadingMessage: null,
+  createRoomBtn: null,
 
   // UI Data / Flags
   activeChatBubbles: [], // Stores { id, text, endTime, avatarId, element } for positioning/removal

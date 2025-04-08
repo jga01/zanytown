@@ -52,6 +52,7 @@ export async function loadConfig() {
       LOGOUT_BTN_ID: "logout-btn", // Added logout button ID
       LOADING_OVERLAY_ID: "loading-overlay",
       LOADING_MESSAGE_ID: "loading-message",
+      CREATE_ROOM_BTN_ID: "create-room-btn",
 
       // Gameplay/Visual Settings
       MIN_ZOOM: 0.3,

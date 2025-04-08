@@ -1,14 +1,13 @@
 "use strict";
 
-// --- Core Dependencies ---
-const mongoose = require("mongoose"); // Needed for ObjectId validation maybe
-
 // --- Application Modules ---
 const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config");
 const { ServerAvatar, ServerFurniture } = require("./lib/game_objects");
 const { rotateDirection, escapeHtml } = require("./lib/utils"); // Added escapeHtml
 const Furniture = require("./models/furniture"); // Database model
 const { findAvatarGlobally } = require("./server_console"); // For admin commands
+const RoomState = require("./models/roomState");
+const ServerRoom = require("./lib/room");
 
 // --- Globals passed from server.js ---
 let rooms; // Map<roomId, ServerRoom>
@@ -225,6 +224,13 @@ async function handleConnection(socket) {
   ); // Async
   socket.on("request_buy_item", (data) => handleRequestBuyItem(socket, data));
   socket.on("request_change_room", (data) => handleChangeRoom(socket, data));
+  socket.on("request_create_room", (data) =>
+    handleRequestCreateRoom(socket, data)
+  );
+  socket.on("request_modify_layout", (data) =>
+    handleRequestModifyLayout(socket, data)
+  );
+  socket.on("request_all_room_ids", () => handleRequestAllRoomIds(socket));
   socket.on("disconnect", (reason) => handleDisconnect(socket, reason)); // Async
   socket.on("connect_error", (err) => handleConnectError(socket, err));
 }
@@ -1534,6 +1540,258 @@ function handleChangeRoom(socket, data) {
       1
     )}, ${currentAvatar.y.toFixed(1)})`
   );
+}
+
+async function handleRequestCreateRoom(socket, data) {
+  const { avatar } = getAvatarAndRoom(socket.id); // Get avatar for permission check
+  if (!avatar || !socket.isAdmin) {
+    socket.emit("action_failed", {
+      action: "create_room",
+      reason: "Permission denied.",
+    });
+    return;
+  }
+  if (!data || typeof data.roomId !== "string" || !data.roomId.trim()) {
+    socket.emit("action_failed", {
+      action: "create_room",
+      reason: "Invalid room ID provided.",
+    });
+    return;
+  }
+
+  const newRoomId = data.roomId.trim().toLowerCase().replace(/\s+/g, "_"); // Sanitize ID
+  const requestedCols =
+    parseInt(data.cols, 10) || SERVER_CONFIG.DEFAULT_ROOM_COLS;
+  const requestedRows =
+    parseInt(data.rows, 10) || SERVER_CONFIG.DEFAULT_ROOM_ROWS;
+  // Basic dimension validation
+  if (
+    requestedCols < 5 ||
+    requestedCols > 50 ||
+    requestedRows < 5 ||
+    requestedRows > 50
+  ) {
+    socket.emit("action_failed", {
+      action: "create_room",
+      reason: "Dimensions must be between 5 and 50.",
+    });
+    return;
+  }
+
+  console.log(
+    `Admin ${avatar.name} requested creation of room: ${newRoomId} (${requestedCols}x${requestedRows})`
+  );
+
+  // Check if room already exists (memory and DB)
+  if (rooms.has(newRoomId)) {
+    socket.emit("action_failed", {
+      action: "create_room",
+      reason: `Room '${newRoomId}' already exists in memory.`,
+    });
+    return;
+  }
+  try {
+    const existingRoom = await RoomState.findOne({ roomId: newRoomId });
+    if (existingRoom) {
+      socket.emit("action_failed", {
+        action: "create_room",
+        reason: `Room '${newRoomId}' already exists in database.`,
+      });
+      return;
+    }
+
+    // Create default empty layout (walls around, floor inside)
+    const newLayout = Array.from({ length: requestedRows }, (_, y) =>
+      Array.from(
+        { length: requestedCols },
+        (_, x) =>
+          y === 0 ||
+          y === requestedRows - 1 ||
+          x === 0 ||
+          x === requestedCols - 1
+            ? 1
+            : 0 // Wall=1, Floor=0
+      )
+    );
+
+    // Save to Database
+    const newRoomState = new RoomState({
+      roomId: newRoomId,
+      layout: newLayout,
+    });
+    await newRoomState.save();
+    console.log(` -> Saved new room state for '${newRoomId}' to DB.`);
+
+    // Create and add ServerRoom instance to memory
+    const newRoomInstance = new ServerRoom(newRoomId); // Constructor loads default/fallback
+    newRoomInstance.layout = newLayout; // Override with the generated layout
+    newRoomInstance.cols = requestedCols;
+    newRoomInstance.rows = requestedRows;
+    newRoomInstance.pathfinder = new (require("./lib/pathfinder"))(
+      newRoomInstance
+    ); // Re-init pathfinder
+    rooms.set(newRoomId, newRoomInstance);
+    console.log(` -> Added new room '${newRoomId}' to server memory.`);
+
+    // Send success feedback
+    socket.emit("chat_message", {
+      avatarName: "Server",
+      text: `Room '${newRoomId}' created successfully!`,
+      className: "info-msg",
+    });
+
+    // Optional: Announce globally?
+    // io.emit('chat_message', { avatarName: 'Server', text: `Admin ${avatar.name} created a new room: ${newRoomId}!`, className: 'server-msg' });
+  } catch (error) {
+    console.error(`Error creating room '${newRoomId}':`, error);
+    socket.emit("action_failed", {
+      action: "create_room",
+      reason: "Server error creating room.",
+    });
+  }
+}
+
+async function handleRequestModifyLayout(socket, data) {
+  const { avatar, room } = getAvatarAndRoom(socket.id);
+  if (!avatar || !room || !socket.isAdmin) {
+    socket.emit("action_failed", {
+      action: "modify_layout",
+      reason: "Permission denied.",
+    });
+    return;
+  }
+  if (!data || data.x == null || data.y == null || data.type == null) {
+    socket.emit("action_failed", {
+      action: "modify_layout",
+      reason: "Invalid request data.",
+    });
+    return;
+  }
+
+  const { x, y, type } = data;
+  const validTypes = [0, 1, 2, "X"]; // Floor, Wall, AltFloor, Hole
+
+  // Validate coordinates and type
+  if (x < 0 || x >= room.cols || y < 0 || y >= room.rows) {
+    socket.emit("action_failed", {
+      action: "modify_layout",
+      reason: "Coordinates out of bounds.",
+    });
+    return;
+  }
+  if (!validTypes.includes(type)) {
+    socket.emit("action_failed", {
+      action: "modify_layout",
+      reason: `Invalid tile type: ${type}.`,
+    });
+    return;
+  }
+
+  // Prevent modifying tile if an avatar is standing exactly on it? (Optional, can be complex)
+  const avatarOnTile = Object.values(room.avatars).find(
+    (a) => Math.round(a.x) === x && Math.round(a.y) === y
+  );
+  if (avatarOnTile && type !== 0 && type !== 2) {
+    // If trying to change to non-walkable type under avatar
+    socket.emit("action_failed", {
+      action: "modify_layout",
+      reason: `Cannot modify tile under ${avatarOnTile.name}.`,
+    });
+    return;
+  }
+  // Prevent modifying tile if non-flat furniture is based there? (More complex check)
+  const furnitureOnTile = room.getFurnitureStackAt(x, y).find((f) => !f.isFlat);
+  if (furnitureOnTile && type !== 0 && type !== 2) {
+    socket.emit("action_failed", {
+      action: "modify_layout",
+      reason: `Cannot modify tile under '${furnitureOnTile.name}'.`,
+    });
+    return;
+  }
+
+  // --- Update Layout ---
+  try {
+    // 1. Update In-Memory Layout
+    const oldType = room.layout[y][x];
+    if (oldType === type) return; // No change needed
+
+    room.layout[y][x] = type;
+    console.log(
+      `Admin ${avatar.name} modified layout in ${room.id} at (${x},${y}) from ${oldType} to ${type}.`
+    );
+    // NOTE: Pathfinder should automatically use the updated layout via its room reference.
+
+    // 2. Update Database (Save the entire layout)
+    // Use findOneAndUpdate which is slightly more robust than save() if doc might not exist
+    const updatedRoomState = await RoomState.findOneAndUpdate(
+      { roomId: room.id },
+      { $set: { layout: room.layout } },
+      { new: false } // Don't need the updated doc back here
+    );
+    if (!updatedRoomState) {
+      // This case shouldn't happen if the room exists in memory, but handle defensively
+      console.error(
+        `Consistency Error: Room ${room.id} modified in memory, but not found in RoomState DB for saving!`
+      );
+      // Attempt to rollback memory change?
+      room.layout[y][x] = oldType;
+      socket.emit("action_failed", {
+        action: "modify_layout",
+        reason: "Server consistency error saving layout.",
+      });
+      return;
+    }
+    console.log(` -> Saved updated layout for '${room.id}' to DB.`);
+
+    // 3. Broadcast Specific Tile Update
+    io.to(room.id).emit("layout_tile_update", { x, y, type });
+
+    // Optional: Check if any avatars are now "stuck" on a non-walkable tile
+    // and maybe nudge them? (Adds complexity)
+    // checkAndNudgeStuckAvatars(room, x, y, type);
+  } catch (error) {
+    console.error(
+      `Error modifying layout for room '${room.id}' at (${x},${y}):`,
+      error
+    );
+    // Attempt rollback in memory if DB failed
+    try {
+      room.layout[y][x] = oldType;
+    } catch (e) {}
+    socket.emit("action_failed", {
+      action: "modify_layout",
+      reason: "Server error saving layout change.",
+    });
+  }
+}
+
+/**
+ * Handles the client's request for a list of all currently loaded room IDs.
+ * Only processes the request if the socket user is an admin.
+ * @param {import('socket.io').Socket} socket - The requesting client's socket.
+ */
+function handleRequestAllRoomIds(socket) {
+  // Check if user is admin (using the flag set during connection)
+  if (!socket.isAdmin) {
+    console.warn(
+      `Socket ${socket.id} attempted to request room IDs without admin privileges.`
+    );
+    socket.emit("action_failed", {
+      action: "list_rooms",
+      reason: "Permission denied.",
+    });
+    return;
+  }
+
+  // Get room IDs from the global 'rooms' map
+  const roomIds = Array.from(rooms.keys()).sort(); // Get keys (IDs) and sort them
+
+  console.log(
+    `Admin ${socket.id} requested room list. Sending ${roomIds.length} IDs.`
+  );
+
+  // Emit the list back to the requesting client ONLY
+  socket.emit("all_room_ids_update", roomIds);
 }
 
 // --- Disconnect Handler (ASYNC) ---

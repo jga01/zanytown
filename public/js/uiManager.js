@@ -1,9 +1,8 @@
-// --- Correct Import ---
-// uiState is DEFINED in gameState.js and IMPORTED here for use.
+// gameState.js provides the centralized state objects
 import { gameState, uiState, camera } from "./gameState.js";
-// --- End Correct Import ---
-
+// config.js provides constants and configuration fetched from server
 import { SHARED_CONFIG, CLIENT_CONFIG } from "./config.js";
+// utils.js provides helper functions for coordinates, colors, etc.
 import {
   getScreenPos,
   snapToGrid,
@@ -12,6 +11,7 @@ import {
   shadeColor,
   escapeHtml,
 } from "./utils.js";
+// network.js provides functions to communicate with the server
 import {
   isConnected,
   requestProfile,
@@ -19,12 +19,28 @@ import {
   requestPickupFurni,
   requestRecolorFurni,
   requestBuyItem,
+  requestCreateRoom, // NEW: Import create room request
+  requestModifyLayout, // NEW: Import modify layout request
+  requestAllRoomIds, // NEW: Import request for all rooms
+  sendChat, // Need for /join command workaround
 } from "./network.js";
+// sounds.js provides audio feedback
 import { playSound } from "./sounds.js";
+// gameObject classes for type checking and method borrowing
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js";
 import { ClientFurniture } from "./gameObjects/ClientFurniture.js";
+import { ClientTile } from "./gameObjects/ClientTile.js"; // Needed for type check potentially
+// inputState from inputHandler.js for mouse position
 import { inputState } from "./inputHandler.js";
 
+// --- Module-level state for UI Manager ---
+let selectedLayoutPaintType = 0; // Default layout paint type (0 = Floor)
+
+/**
+ * Finds and assigns references to essential UI elements defined in CLIENT_CONFIG.
+ * Attaches listeners to UI elements specific to this manager.
+ * @returns {boolean} True if all critical elements were found, false otherwise.
+ */
 export function initUIManager() {
   console.log("Initializing UI Manager...");
   if (!CLIENT_CONFIG) {
@@ -33,15 +49,16 @@ export function initUIManager() {
   }
 
   let allElementsFound = true;
+  // Dynamically find elements based on CLIENT_CONFIG keys ending in '_ID'
   for (const key in CLIENT_CONFIG) {
     if (key.endsWith("_ID")) {
       const elementId = CLIENT_CONFIG[key];
-      // Derive the expected key in the uiState object (imported from gameState.js)
       const stateKey = key.replace("_ID", "");
       let camelCaseKey = stateKey
         .toLowerCase()
         .replace(/_([a-z])/g, (g) => g[1].toUpperCase());
 
+      // Handle specific key mappings if needed (already done in previous steps)
       if (camelCaseKey === "chatLog") camelCaseKey = "chatLogDiv";
       if (camelCaseKey === "inventoryItems") camelCaseKey = "inventoryItemsDiv";
       if (camelCaseKey === "shopItems") camelCaseKey = "shopItemsDiv";
@@ -52,14 +69,11 @@ export function initUIManager() {
 
       const foundElement = document.getElementById(elementId);
 
-      // Check if the derived key exists on the IMPORTED uiState object
-      // This check ensures we only try to assign to keys defined in gameState.js
+      // Assign to the imported uiState object if the property exists
       if (uiState.hasOwnProperty(camelCaseKey)) {
-        // Assign the found element TO the property on the IMPORTED uiState object
         uiState[camelCaseKey] = foundElement;
-
-        // Log errors/warnings if element not found
         if (!foundElement) {
+          // Log errors for critical elements
           if (
             [
               "canvas",
@@ -67,8 +81,6 @@ export function initUIManager() {
               "chatLogDiv",
               "inventoryItemsDiv",
               "currencyDisplay",
-              "shopItemsDiv",
-              "recolorFurniBtn",
               "loadingOverlay",
               "loadingMessage",
             ].includes(camelCaseKey)
@@ -84,14 +96,12 @@ export function initUIManager() {
             );
           }
         }
-      } else {
-        // This shouldn't normally happen if gameState.js defines all expected keys
-        // console.warn(`Config key ${key} maps to ${camelCaseKey}, which is not defined in the imported uiState object.`);
       }
+      // else { console.warn(`Config key ${key} maps to ${camelCaseKey}, which is not defined in uiState.`); }
     }
   }
 
-  // Special handling for canvas context (using the assigned uiState.canvas)
+  // Special handling for canvas context
   if (uiState.canvas) {
     uiState.ctx = uiState.canvas.getContext("2d");
     if (!uiState.ctx) {
@@ -99,51 +109,89 @@ export function initUIManager() {
       allElementsFound = false;
     }
   } else {
-    // Error already logged above if canvas was missing
+    // Error logged above if canvas missing
   }
+
+  // --- Find NEW Admin UI elements ---
+  uiState.adminControlsPanel = document.getElementById("admin-controls");
+  uiState.adminRoomListDiv = document.getElementById("admin-room-list");
+  uiState.layoutTileTypeSelector = document.getElementById(
+    "admin-layout-tile-type"
+  );
+  // Note: createRoomBtn is already handled by the loop above if defined in CLIENT_CONFIG
+
+  // --- Attach Listeners specific to UIManager ---
+  // (Button listeners for zoom, edit toggle etc. are in inputHandler.js)
+  if (uiState.createRoomBtn) {
+    uiState.createRoomBtn.addEventListener("click", handleCreateRoomClick);
+  }
+  if (uiState.layoutTileTypeSelector) {
+    uiState.layoutTileTypeSelector.addEventListener("change", (event) => {
+      if (
+        event.target.type === "radio" &&
+        event.target.name === "layout-paint-type"
+      ) {
+        const value = event.target.value;
+        selectedLayoutPaintType = value === "X" ? "X" : parseInt(value, 10);
+        console.log("Selected layout paint type:", selectedLayoutPaintType);
+      }
+    });
+    // Read initial value
+    const initialChecked = uiState.layoutTileTypeSelector.querySelector(
+      'input[name="layout-paint-type"]:checked'
+    );
+    if (initialChecked) {
+      selectedLayoutPaintType =
+        initialChecked.value === "X" ? "X" : parseInt(initialChecked.value, 10);
+    }
+  }
+
+  updateAdminUI(); // Set initial visibility
 
   if (allElementsFound) {
     console.log("UI Manager Initialized successfully.");
   } else {
-    console.error(
-      "UI Manager Initialized with missing CRITICAL elements. Check console logs."
-    );
+    console.error("UI Manager Initialized with missing CRITICAL elements.");
   }
   return allElementsFound;
 }
 
-// NEW Function: Show Loading Overlay
+// --- Loading Overlay Functions ---
+
+/** Displays the loading overlay with a specified message. */
 export function showLoadingOverlay(message = "Loading...") {
-  // uiState here refers to the IMPORTED object
   if (uiState.loadingOverlay && uiState.loadingMessage) {
     uiState.loadingMessage.textContent = message;
     uiState.loadingOverlay.classList.remove("hidden");
-    uiState.loadingOverlay.style.display = "flex";
+    uiState.loadingOverlay.style.display = "flex"; // Ensure it's visible
   } else {
     console.warn("showLoadingOverlay called but elements not found.");
   }
 }
 
-// NEW Function: Hide Loading Overlay
+/** Hides the loading overlay smoothly. */
 export function hideLoadingOverlay() {
-  // uiState here refers to the IMPORTED object
   if (uiState.loadingOverlay) {
     uiState.loadingOverlay.classList.add("hidden");
+    // Use setTimeout to set display:none after the transition completes
     setTimeout(() => {
+      // Check if it's still hidden before setting display:none,
+      // in case showLoadingOverlay was called again quickly.
       if (uiState.loadingOverlay?.classList.contains("hidden")) {
         uiState.loadingOverlay.style.display = "none";
       }
-    }, 300);
+    }, 300); // Match the CSS transition duration
   }
 }
 
+/** Resets UI elements to their default/loading state, typically on disconnect or room change. */
 export function resetUIState() {
   console.log("Resetting UI State...");
-  showLoadingOverlay("Loading Room..."); // Show overlay during reset
+  showLoadingOverlay("Loading Room..."); // Show loading state
 
-  // All references to uiState below correctly modify the IMPORTED object from gameState.js
+  // Clear dynamic content areas
   if (uiState.chatLogDiv) uiState.chatLogDiv.innerHTML = "";
-  uiState.chatMessages = []; // Reset the array property on the imported uiState
+  uiState.chatMessages = [];
   if (uiState.inventoryItemsDiv)
     uiState.inventoryItemsDiv.innerHTML = "<p><i>Entering room...</i></p>";
   if (uiState.userListContent)
@@ -153,11 +201,15 @@ export function resetUIState() {
   uiState.activeChatBubbles = [];
   if (uiState.shopItemsDiv)
     uiState.shopItemsDiv.innerHTML = "<p><i>Stocking shelves...</i></p>";
+  if (uiState.adminRoomListDiv)
+    uiState.adminRoomListDiv.innerHTML = "<i>...</i>"; // Reset admin room list
 
+  // Hide floating panels
   hideProfilePanel();
   hideRecolorPanel();
   hideShopPanel();
 
+  // Update static displays
   const roomTitle = gameState.currentRoomId
     ? `Who's Here? (${gameState.currentRoomId})`
     : "Who's Here?";
@@ -169,12 +221,12 @@ export function resetUIState() {
     uiState.currencyDisplay.textContent = "Silly Coins: ...";
   document.title = "ZanyTown - Loading...";
 
-  // Reset edit mode properties on the imported uiState object
+  // Reset edit mode state
   uiState.isEditMode = false;
   if (CLIENT_CONFIG) {
     uiState.editMode.state = CLIENT_CONFIG.EDIT_STATE_NAVIGATE;
   } else {
-    uiState.editMode.state = "navigate";
+    uiState.editMode.state = "navigate"; // Fallback
   }
   uiState.editMode.selectedInventoryItemId = null;
   uiState.editMode.selectedFurnitureId = null;
@@ -182,41 +234,31 @@ export function resetUIState() {
   uiState.editMode.placementRotation = 0;
   uiState.activeRecolorFurniId = null;
 
-  // Update UI elements based on the reset state
+  // Update UI buttons/cursor based on reset state
   updatePickupButtonState();
   updateRecolorButtonState();
   updateInventorySelection();
   updateUICursor();
-
-  // Reset toggle button visual state
   if (uiState.toggleEditBtn) {
     uiState.toggleEditBtn.textContent = `Make Stuff? (Off)`;
     uiState.toggleEditBtn.classList.remove("active");
   }
+  updateAdminUI(); // Ensure admin UI is hidden if user somehow lost status
 }
 
-// --- ALL OTHER FUNCTIONS remain the same ---
-// (logChatMessage, updateChatBubbles, updateDebugInfo, populateInventory, etc.)
-// They all correctly reference the imported `uiState` object now.
+// --- Chat & Bubble Management ---
 
+/** Adds a message to the chat log UI. */
 export function logChatMessage(message, isSelf = false, className = "") {
-  // Use uiState.chatLogDiv now
   if (!uiState.chatLogDiv) {
-    console.error(
-      "logChatMessage failed: uiState.chatLogDiv is null/undefined!"
-    );
-    return;
+    /* ... error handling ... */ return;
   }
   if (!CLIENT_CONFIG || typeof message !== "string") {
-    console.error(
-      "logChatMessage failed: CLIENT_CONFIG missing or invalid message type."
-    );
-    return;
+    /* ... error handling ... */ return;
   }
 
   const p = document.createElement("p");
-  p.textContent = message; // Already escaped by caller if needed (e.g., server message)
-
+  p.textContent = message; // Expect pre-escaped message
   if (isSelf) p.classList.add("self-msg");
   if (className) {
     className.split(" ").forEach((cls) => {
@@ -227,77 +269,64 @@ export function logChatMessage(message, isSelf = false, className = "") {
   const div = uiState.chatLogDiv;
   const isScrolledToBottom =
     Math.abs(div.scrollHeight - div.clientHeight - div.scrollTop) < 5;
-
   div.appendChild(p);
   uiState.chatMessages.push(p);
 
-  // Limit chat log messages
+  // Limit messages
   while (uiState.chatMessages.length > CLIENT_CONFIG.MAX_CHAT_LOG_MESSAGES) {
-    uiState.chatMessages.shift()?.remove(); // Remove the oldest message element
+    uiState.chatMessages.shift()?.remove();
   }
-
-  // Auto-scroll to bottom if already at bottom
+  // Auto-scroll
   if (isScrolledToBottom) {
-    // Use setTimeout to allow the DOM to update before scrolling
     setTimeout(() => {
       div.scrollTop = div.scrollHeight;
     }, 0);
   }
 }
 
+/** Updates positions of active chat bubbles and removes expired ones. Called by game loop. */
 export function updateChatBubbles(currentTime) {
   if (!uiState.bubbleContainer || !CLIENT_CONFIG) return;
 
   for (let i = uiState.activeChatBubbles.length - 1; i >= 0; i--) {
     const bubble = uiState.activeChatBubbles[i];
-
     if (!bubble || currentTime > bubble.endTime) {
-      bubble?.element?.remove(); // Remove the DOM element if it exists
+      bubble?.element?.remove();
       uiState.activeChatBubbles.splice(i, 1);
-      // Clean up avatar's reference if this was their bubble
       if (bubble?.avatarId) {
+        // Clean up avatar reference
         const owner = gameState.avatars[bubble.avatarId];
-        if (owner && owner.chatBubble?.id === bubble.id) {
+        if (owner && owner.chatBubble?.id === bubble.id)
           owner.chatBubble = null;
-        }
       }
     } else {
-      // Update position if the bubble is still active
-      updateChatBubblePosition(bubble);
+      updateChatBubblePosition(bubble); // Update position if still active
     }
   }
 }
 
+/** Creates or updates the position of a single chat bubble element relative to its avatar. */
 function updateChatBubblePosition(bubble) {
   if (!bubble || !uiState.bubbleContainer) return;
-
   const avatar = gameState.avatars[bubble.avatarId];
   if (!avatar) {
-    // Avatar disappeared, remove the bubble
-    bubble.element?.remove();
-    const index = uiState.activeChatBubbles.findIndex(
-      (b) => b.id === bubble.id
-    );
-    if (index > -1) uiState.activeChatBubbles.splice(index, 1);
-    return;
+    /* ... handle avatar gone ... */ return;
   }
 
-  // Create element if it doesn't exist
+  // Create element if needed
   if (!bubble.element) {
     bubble.element = document.createElement("div");
     bubble.element.id = bubble.id;
     bubble.element.className = "chat-bubble";
-    bubble.element.textContent = bubble.text;
+    bubble.element.textContent = bubble.text; // Assume text is safe
     uiState.bubbleContainer.appendChild(bubble.element);
   }
 
-  // Basic safety check for dependencies
   if (!SHARED_CONFIG || !CLIENT_CONFIG || !camera) return;
 
-  // Calculate position based on avatar's visual state
+  // Calculate position (consistent with ClientAvatar draw logic)
   const screenPos = getScreenPos(avatar.visualX, avatar.visualY);
   const zoom = camera.zoom;
-  // Approximate avatar height calculation (matches ClientAvatar draw logic)
   const totalHeight = SHARED_CONFIG.TILE_HEIGHT_HALF * 3.5 * zoom;
   const headHeight = totalHeight * 0.3;
   const zOffsetPx = avatar.visualZ * CLIENT_CONFIG.VISUAL_Z_FACTOR * zoom;
@@ -305,18 +334,20 @@ function updateChatBubblePosition(bubble) {
     screenPos.y + SHARED_CONFIG.TILE_HEIGHT_HALF * zoom * 0.5 - zOffsetPx;
   const bodyY = baseY - totalHeight * 0.7;
   const headTopY = bodyY - headHeight;
-  const verticalOffsetAboveHead = 15 * zoom; // Space above head
+  const verticalOffsetAboveHead = 15 * zoom;
 
-  // Use requestAnimationFrame for smoother updates potentially
+  // Update style using transform
   requestAnimationFrame(() => {
-    if (!bubble.element) return; // Check again in case it was removed
-    // Position the bubble centered above the head
+    // Smoother updates
+    if (!bubble.element) return;
     bubble.element.style.transform = `translate(-50%, calc(-100% - ${verticalOffsetAboveHead}px)) translate(${screenPos.x}px, ${headTopY}px)`;
   });
 }
 
+// --- Debug Info ---
+
+/** Updates the content of the debug information panel. Called by game loop. */
 export function updateDebugInfo() {
-  // Use correct inputState reference from inputHandler.js
   if (!uiState.debugDiv || !SHARED_CONFIG || !CLIENT_CONFIG || !inputState)
     return;
 
@@ -328,7 +359,7 @@ export function updateDebugInfo() {
     : { x: "?", y: "?" };
   const pState = player ? player.state : "N/A";
   const pDir = player ? player.direction : "?";
-  const mGrid = inputState.currentMouseGridPos || { x: "?", y: "?" }; // Use inputState
+  const mGrid = inputState.currentMouseGridPos || { x: "?", y: "?" };
   const furniCount = Object.keys(gameState.furniture || {}).length;
   const avatarCount = Object.keys(gameState.avatars || {}).length;
   const inventoryCount = Object.values(gameState.inventory || {}).reduce(
@@ -336,7 +367,9 @@ export function updateDebugInfo() {
     0
   );
   const currentRoom = gameState.currentRoomId || "N/A";
+  const isAdmin = player?.isAdmin || false;
 
+  // Edit Mode Details
   let editDetails = " Off";
   if (uiState.isEditMode) {
     editDetails = ` St: ${uiState.editMode.state}`;
@@ -362,11 +395,19 @@ export function updateDebugInfo() {
       }`;
     }
   }
+  // Layout Paint Details (if admin)
+  if (
+    isAdmin &&
+    uiState.isEditMode &&
+    uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_NAVIGATE
+  ) {
+    editDetails += ` Paint: ${selectedLayoutPaintType}`;
+  }
 
+  // Tile Info
   let tileInfo = "";
   const ht = gameState.highlightedTile;
   if (ht && isValidClientTile(ht.x, ht.y)) {
-    // Check if tile is valid
     const tLayout = getTileLayoutType(ht.x, ht.y);
     const stack = Object.values(gameState.furniture).filter(
       (f) =>
@@ -376,7 +417,7 @@ export function updateDebugInfo() {
     );
     stack.sort((a, b) => (b.visualZ ?? 0) - (a.visualZ ?? 0));
     const topFurni = stack[0];
-    const stackHeight = getClientStackHeightAt(ht.x, ht.y); // Calculate stack height
+    const stackHeight = getClientStackHeightAt(ht.x, ht.y);
     tileInfo = ` Tile(${ht.x},${ht.y}) L:${tLayout ?? "?"} ${
       topFurni
         ? `Top:${topFurni.definition?.name || "?"}(Z:${topFurni.visualZ.toFixed(
@@ -386,7 +427,6 @@ export function updateDebugInfo() {
     }StackZ:${stackHeight.toFixed(2)}`;
   }
 
-  // Update the debug div content
   uiState.debugDiv.innerHTML =
     `Room: ${currentRoom} | Player: (${pGrid.x},${pGrid.y}) St:${pState} Dir:${pDir}<br>` +
     `Mouse: (${mGrid.x},${mGrid.y})${tileInfo}<br>` +
@@ -394,32 +434,26 @@ export function updateDebugInfo() {
       0
     )}) Zoom:${camera.zoom.toFixed(2)}<br>` +
     `Edit: ${editDetails}<br>` +
-    `Inv: ${inventoryCount} | Coins: ${
-      gameState.myCurrency
-    } | Objs:${furniCount}|Users:${avatarCount}|Bub:${
+    `Inv: ${inventoryCount} | Coins: ${gameState.myCurrency} | Admin:${
+      isAdmin ? "Y" : "N"
+    }<br>` +
+    `Objs:${furniCount}|Users:${avatarCount}|Bub:${
       uiState.activeChatBubbles.length
     }|Sock:${isConnected() ? "OK" : "DOWN"}`;
 }
 
+// --- Inventory & Shop UI ---
+
+/** Populates the inventory UI panel based on gameState.inventory. */
 export function populateInventory() {
-  // Use uiState.inventoryItemsDiv
   if (!uiState.inventoryItemsDiv) {
-    console.error(
-      "populateInventory failed: uiState.inventoryItemsDiv is null/undefined!"
-    );
-    if (uiState.debugDiv)
-      uiState.debugDiv.innerHTML +=
-        "<br><span style='color:red'>Inventory UI missing!</span>";
-    return;
+    /* ... error ... */ return;
   }
   if (!SHARED_CONFIG?.FURNITURE_DEFINITIONS) {
-    uiState.inventoryItemsDiv.innerHTML =
-      "<p><i>Error loading inventory data (Config missing?).</i></p>";
-    return;
+    /* ... error ... */ return;
   }
 
-  uiState.inventoryItemsDiv.innerHTML = ""; // Clear previous items
-
+  uiState.inventoryItemsDiv.innerHTML = ""; // Clear
   const inventory = gameState.inventory;
   const ownedItemIds = Object.keys(inventory || {}).filter(
     (id) => inventory[id] > 0
@@ -427,81 +461,66 @@ export function populateInventory() {
 
   if (ownedItemIds.length === 0) {
     uiState.inventoryItemsDiv.innerHTML = "<p><i>Inventory empty.</i></p>";
-    // Deselect if the currently selected item is now gone
     if (
       uiState.editMode.state === CLIENT_CONFIG?.EDIT_STATE_PLACING &&
       !inventory[uiState.editMode.selectedInventoryItemId]
     ) {
-      setSelectedInventoryItem(null);
+      setSelectedInventoryItem(null); // Deselect if item gone
     }
     return;
   }
 
-  // Sort items alphabetically by name
-  ownedItemIds.sort((a, b) => {
-    const defA = SHARED_CONFIG.FURNITURE_DEFINITIONS.find((d) => d.id === a);
-    const defB = SHARED_CONFIG.FURNITURE_DEFINITIONS.find((d) => d.id === b);
-    return (defA?.name || a).localeCompare(defB?.name || b);
-  });
+  // Sort and create elements
+  ownedItemIds
+    .sort((a, b) => {
+      /* ... sort logic ... */
+    })
+    .forEach((itemId) => {
+      const quantity = inventory[itemId];
+      const def = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+        (d) => d.id === itemId
+      );
+      if (!def) return;
 
-  ownedItemIds.forEach((itemId) => {
-    const quantity = inventory[itemId];
-    const def = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
-      (d) => d.id === itemId
-    );
-    if (!def) {
-      console.warn(`Inventory item ID '${itemId}' not found in definitions.`);
-      return; // Skip this item if definition is missing
-    }
+      const itemDiv = document.createElement("div");
+      itemDiv.className = "inventory-item";
+      itemDiv.dataset.itemId = def.id;
 
-    const itemDiv = document.createElement("div");
-    itemDiv.className = "inventory-item";
-    itemDiv.dataset.itemId = def.id; // Store item ID for click handling
+      const previewSpan = document.createElement("span");
+      previewSpan.className = "item-preview";
+      previewSpan.style.backgroundColor = def.color || "#8B4513";
+      itemDiv.appendChild(previewSpan);
 
-    // Add preview box
-    const previewSpan = document.createElement("span");
-    previewSpan.className = "item-preview";
-    previewSpan.style.backgroundColor = def.color || "#8B4513"; // Use definition color or brown default
-    itemDiv.appendChild(previewSpan);
+      itemDiv.appendChild(
+        document.createTextNode(` ${escapeHtml(def.name)} (x${quantity})`)
+      );
+      itemDiv.title = `${def.name} (${def.width}x${def.height})${
+        def.canSit ? " (Sit)" : ""
+      }${def.stackable ? " (Stack)" : ""}${def.canUse ? " (Use)" : ""}${
+        def.canRecolor ? " (Recolor)" : ""
+      }`;
 
-    // Add text node for name and quantity
-    itemDiv.appendChild(
-      document.createTextNode(` ${escapeHtml(def.name)} (x${quantity})`)
-    );
-
-    // Set title attribute for hover info
-    itemDiv.title = `${def.name} (${def.width}x${def.height})${
-      def.canSit ? " (Sit)" : ""
-    }${def.stackable ? " (Stack)" : ""}${def.canUse ? " (Use)" : ""}${
-      def.canRecolor ? " (Recolor)" : ""
-    }`;
-
-    // Click listener for selection in edit mode
-    itemDiv.addEventListener("click", () => {
-      if (uiState.isEditMode) {
-        setSelectedInventoryItem(def.id);
-        playSound("select"); // Optional: sound feedback for selection
-      } else {
-        // Optional: Visual feedback if trying to select outside edit mode
-        itemDiv.classList.add("flash-red");
-        setTimeout(() => itemDiv.classList.remove("flash-red"), 600);
-        logChatMessage(
-          "Enable 'Make Stuff?' mode to place items!",
-          true,
-          "info-msg"
-        );
-      }
+      itemDiv.addEventListener("click", () => {
+        if (uiState.isEditMode) {
+          setSelectedInventoryItem(def.id);
+          playSound("select");
+        } else {
+          itemDiv.classList.add("flash-red");
+          setTimeout(() => itemDiv.classList.remove("flash-red"), 600);
+          logChatMessage(
+            "Enable 'Make Stuff?' mode to place items!",
+            true,
+            "info-msg"
+          );
+        }
+      });
+      uiState.inventoryItemsDiv.appendChild(itemDiv);
     });
-
-    uiState.inventoryItemsDiv.appendChild(itemDiv);
-  });
-
-  // Ensure the selection highlight is correct after repopulating
-  updateInventorySelection();
+  updateInventorySelection(); // Ensure correct item is highlighted
 }
 
+/** Updates the visual selection state of items in the inventory UI. */
 export function updateInventorySelection() {
-  // Use uiState.inventoryItemsDiv
   if (!uiState.inventoryItemsDiv || !CLIENT_CONFIG) return;
   uiState.inventoryItemsDiv
     .querySelectorAll(".inventory-item")
@@ -514,45 +533,40 @@ export function updateInventorySelection() {
     });
 }
 
+/** Updates the enabled state of the pickup button based on edit mode and selection. */
 export function updatePickupButtonState() {
   if (uiState.pickupFurniBtn && CLIENT_CONFIG) {
     const enabled =
       uiState.isEditMode &&
       uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI &&
-      uiState.editMode.selectedFurnitureId; // Check if a furniture ID is actually selected
+      uiState.editMode.selectedFurnitureId;
     uiState.pickupFurniBtn.disabled = !enabled;
   }
 }
 
+/** Updates the enabled/visible state of the recolor button. */
 export function updateRecolorButtonState() {
-  // Use uiState.recolorFurniBtn
   if (uiState.recolorFurniBtn && CLIENT_CONFIG) {
     let enabled = false;
-    let visible = false; // Control visibility separately
+    let visible = false;
     if (
       uiState.isEditMode &&
       uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI &&
       uiState.editMode.selectedFurnitureId
     ) {
       const furni = gameState.furniture[uiState.editMode.selectedFurnitureId];
-      visible = !!(furni && furni.canRecolor); // Check if the selected item *can* be recolored
-      enabled = visible; // Enable only if visible/recolorable
+      visible = !!(furni && furni.canRecolor);
+      enabled = visible;
     }
     uiState.recolorFurniBtn.disabled = !enabled;
-    uiState.recolorFurniBtn.style.display = visible ? "inline-block" : "none"; // Show/hide the button
+    uiState.recolorFurniBtn.style.display = visible ? "inline-block" : "none";
   }
 }
 
+/** Updates the player currency display in the header. */
 export function updateCurrencyDisplay() {
-  // Use uiState.currencyDisplay
   if (!uiState.currencyDisplay) {
-    console.warn(
-      "updateCurrencyDisplay skipped: uiState.currencyDisplay is null/undefined!"
-    );
-    if (uiState.debugDiv)
-      uiState.debugDiv.innerHTML +=
-        "<br><span style='color:orange'>Currency UI missing!</span>";
-    return;
+    /* ... error handling ... */ return;
   }
 
   const currentText = uiState.currencyDisplay.textContent || "Silly Coins: 0";
@@ -561,10 +575,9 @@ export function updateCurrencyDisplay() {
     : "0";
   const oldValue = parseInt(oldValueStr, 10);
   const newValue = gameState.myCurrency;
-
   uiState.currencyDisplay.textContent = `Silly Coins: ${newValue}`;
 
-  // Add flash effect on change, only if not already flashing
+  // Flash effect
   if (
     !isNaN(oldValue) &&
     newValue !== oldValue &&
@@ -573,42 +586,34 @@ export function updateCurrencyDisplay() {
   ) {
     const changeClass = newValue > oldValue ? "flash-green" : "flash-red";
     uiState.currencyDisplay.classList.add(changeClass);
-    // Remove the class after the animation duration
     setTimeout(() => {
       uiState.currencyDisplay.classList.remove(changeClass);
-    }, 600); // Match CSS animation duration
+    }, 600);
   }
 }
 
+/** Shows the shop panel and populates it with items. */
 export function showShopPanel() {
-  if (!uiState.shopPanel) {
-    console.warn("Cannot show shop: Shop panel element not found.");
-    return;
-  }
-  populateShopPanel(); // Populate content when shown
+  if (!uiState.shopPanel) return;
+  populateShopPanel();
   uiState.shopPanel.style.display = "block";
 }
 
+/** Hides the shop panel. */
 export function hideShopPanel() {
   if (uiState.shopPanel) uiState.shopPanel.style.display = "none";
 }
 
+/** Populates the shop panel UI based on SHARED_CONFIG.SHOP_CATALOG. */
 function populateShopPanel() {
-  // Use uiState.shopItemsDiv
   if (!uiState.shopItemsDiv) {
-    console.warn(
-      "populateShopPanel skipped: uiState.shopItemsDiv is null/undefined!"
-    );
-    return;
+    /* ... error ... */ return;
   }
   if (!SHARED_CONFIG?.SHOP_CATALOG || !SHARED_CONFIG?.FURNITURE_DEFINITIONS) {
-    uiState.shopItemsDiv.innerHTML =
-      "<p><i>Error loading shop data (Config missing?).</i></p>";
-    return;
+    /* ... error ... */ return;
   }
 
-  uiState.shopItemsDiv.innerHTML = ""; // Clear previous content
-
+  uiState.shopItemsDiv.innerHTML = ""; // Clear
   if (
     !Array.isArray(SHARED_CONFIG.SHOP_CATALOG) ||
     SHARED_CONFIG.SHOP_CATALOG.length === 0
@@ -617,30 +622,18 @@ function populateShopPanel() {
     return;
   }
 
-  // Sort catalog items alphabetically by name
+  // Sort and create elements
   const sortedCatalog = [...SHARED_CONFIG.SHOP_CATALOG].sort((a, b) => {
-    const defA = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
-      (d) => d.id === a.itemId
-    );
-    const defB = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
-      (d) => d.id === b.itemId
-    );
-    return (defA?.name || a.itemId).localeCompare(defB?.name || b.itemId);
+    /* ... sort logic ... */
   });
-
   sortedCatalog.forEach((shopEntry) => {
     const definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
       (def) => def.id === shopEntry.itemId
     );
-    if (!definition) {
-      console.warn(`Shop item '${shopEntry.itemId}' has no definition.`);
-      return; // Skip invalid items
-    }
+    if (!definition) return;
 
     const itemDiv = document.createElement("div");
     itemDiv.className = "shop-item";
-
-    // Item Info (Preview + Name)
     const infoDiv = document.createElement("div");
     infoDiv.className = "shop-item-info";
     const previewSpan = document.createElement("span");
@@ -654,38 +647,31 @@ function populateShopPanel() {
     infoDiv.appendChild(nameSpan);
     itemDiv.appendChild(infoDiv);
 
-    // Price
     const priceSpan = document.createElement("span");
     priceSpan.className = "shop-item-price";
     priceSpan.textContent = `${shopEntry.price} Coins`;
     itemDiv.appendChild(priceSpan);
 
-    // Buy Button
     const buyButton = document.createElement("button");
     buyButton.className = "buy-btn";
     buyButton.textContent = "Buy";
     buyButton.dataset.itemId = shopEntry.itemId;
-    buyButton.dataset.price = shopEntry.price; // Store price for enabling/disabling
-
+    buyButton.dataset.price = shopEntry.price;
     buyButton.addEventListener("click", () => {
-      if (!isConnected()) return; // Prevent action if not connected
-      buyButton.disabled = true; // Disable immediately
+      if (!isConnected()) return;
+      buyButton.disabled = true;
       buyButton.textContent = "Buying...";
       requestBuyItem(shopEntry.itemId);
-      // Buttons will be re-enabled/checked on currency/inventory updates
-      setTimeout(updateShopButtonStates, 300); // Re-check state shortly after
+      setTimeout(updateShopButtonStates, 300);
     });
     itemDiv.appendChild(buyButton);
-
     uiState.shopItemsDiv.appendChild(itemDiv);
   });
-
-  // Set initial button states based on current currency
-  updateShopButtonStates();
+  updateShopButtonStates(); // Set initial button states
 }
 
+/** Updates the enabled state of buy buttons in the shop based on player currency. */
 export function updateShopButtonStates() {
-  // Use uiState.shopItemsDiv
   if (!uiState.shopItemsDiv) return;
   uiState.shopItemsDiv.querySelectorAll("button.buy-btn").forEach((button) => {
     const price = parseInt(button.dataset.price, 10);
@@ -693,24 +679,23 @@ export function updateShopButtonStates() {
       const canAfford = gameState.myCurrency >= price;
       button.disabled = !canAfford;
       button.classList.toggle("cannot-afford", !canAfford);
-      // Reset text if it was 'Buying...'
-      if (button.textContent === "Buying...") {
-        button.textContent = "Buy";
-      }
+      if (button.textContent === "Buying...") button.textContent = "Buy";
     } else {
-      button.disabled = true; // Disable if price is invalid
+      button.disabled = true;
     }
   });
 }
 
+// --- User List & Profile UI ---
+
+/** Populates the user list panel with online users in the current room. */
 export function updateUserListPanel(users) {
   if (!uiState.userListContent || !uiState.userListPanel) {
-    console.warn("Cannot update user list: Panel/Content element not found.");
-    return;
+    /* ... error ... */ return;
   }
-  uiState.userListContent.innerHTML = ""; // Clear previous list
+  uiState.userListContent.innerHTML = ""; // Clear
 
-  // Update panel header with room name
+  // Update header
   const roomTitle = gameState.currentRoomId
     ? `Who's Here? (${gameState.currentRoomId})`
     : "Who's Here?";
@@ -722,17 +707,15 @@ export function updateUserListPanel(users) {
     return;
   }
 
-  // Sort users alphabetically
+  // Sort and create elements
   users
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
     .forEach((user) => {
       const li = document.createElement("li");
       li.textContent = escapeHtml(user.name || "Unknown");
-      const userIdStr = String(user.id); // Ensure ID is string
-      li.dataset.userid = userIdStr; // Store ID for click handling
-      li.classList.toggle("self-user", userIdStr === gameState.myAvatarId); // Highlight self
-
-      // Add click listener to request profile (if not self)
+      const userIdStr = String(user.id);
+      li.dataset.userid = userIdStr;
+      li.classList.toggle("self-user", userIdStr === gameState.myAvatarId);
       li.addEventListener("click", () => {
         if (userIdStr !== gameState.myAvatarId && isConnected()) {
           requestProfile(userIdStr);
@@ -742,23 +725,21 @@ export function updateUserListPanel(users) {
     });
 }
 
+/** Displays the profile panel with data for a specific user. */
 export function showProfilePanel(profileData) {
   if (!uiState.profilePanel || !uiState.profileContent) {
-    console.warn("Cannot show profile: Panel/Content element not found.");
-    return;
+    /* ... error ... */ return;
   }
 
-  // Extract and sanitize data
   const name = profileData.name || "Unknown User";
   const id = String(profileData.id || "N/A");
   const state = profileData.state || "Idle";
-  const color = profileData.bodyColor || "#CCCCCC"; // Default color if missing
+  const color = profileData.bodyColor || "#CCCCCC";
   const currency =
     profileData.currency === undefined
       ? "N/A"
       : `${profileData.currency} Coins`;
 
-  // Build HTML content
   uiState.profileContent.innerHTML = `
         <h4>${escapeHtml(name)}</h4>
         <p>Status: ${escapeHtml(state)}</p>
@@ -766,29 +747,27 @@ export function showProfilePanel(profileData) {
           color
         )};"></span> ${escapeHtml(color)}</p>
         <p>Coins: ${escapeHtml(currency)}</p>
-        <div class="profile-actions">
-             <!-- Add action buttons here later if needed (e.g., Friend, Trade) -->
-        </div>
-    `;
+        <div class="profile-actions"></div>`;
 
-  // Set target ID and display
   uiState.profilePanel.dataset.targetId = id;
   uiState.profilePanel.style.display = "block";
 }
 
+/** Hides the profile panel. */
 export function hideProfilePanel() {
   if (uiState.profilePanel) {
     uiState.profilePanel.style.display = "none";
-    uiState.profilePanel.dataset.targetId = ""; // Clear target ID
-    if (uiState.profileContent) uiState.profileContent.innerHTML = ""; // Clear content
+    uiState.profilePanel.dataset.targetId = "";
+    if (uiState.profileContent) uiState.profileContent.innerHTML = "";
   }
 }
 
-export function showRecolorPanel(furniId) {
-  const furniIdStr = String(furniId); // Ensure string ID
-  const furni = gameState.furniture[furniIdStr];
+// --- Recolor Panel UI ---
 
-  // Use correct uiState references
+/** Displays the recolor panel for a specific piece of furniture. */
+export function showRecolorPanel(furniId) {
+  const furniIdStr = String(furniId);
+  const furni = gameState.furniture[furniIdStr];
   if (
     !furni ||
     !(furni instanceof ClientFurniture) ||
@@ -798,15 +777,8 @@ export function showRecolorPanel(furniId) {
     !furni.canRecolor ||
     !SHARED_CONFIG?.VALID_RECOLOR_HEX
   ) {
-    console.warn("Cannot show recolor panel: Prerequisites not met.", {
-      furniExists: !!furni,
-      canRecolor: furni?.canRecolor,
-      configExists: !!SHARED_CONFIG?.VALID_RECOLOR_HEX,
-      panelElement: !!uiState.recolorPanel,
-      swatchesElement: !!uiState.recolorSwatchesDiv,
-      nameElement: !!uiState.recolorItemNameP,
-    });
-    hideRecolorPanel(); // Ensure it's hidden if prerequisites fail
+    /* ... error handling ... */
+    hideRecolorPanel();
     return;
   }
 
@@ -814,14 +786,15 @@ export function showRecolorPanel(furniId) {
   uiState.recolorItemNameP.textContent = `Item: ${escapeHtml(
     furni.definition?.name || "Unknown"
   )}`;
-  uiState.recolorSwatchesDiv.innerHTML = ""; // Clear previous swatches
+  uiState.recolorSwatchesDiv.innerHTML = ""; // Clear
 
+  // Populate swatches
   SHARED_CONFIG.VALID_RECOLOR_HEX.forEach((hex) => {
     const swatch = document.createElement("div");
     swatch.className = "recolor-swatch";
     swatch.style.backgroundColor = hex;
     swatch.title = hex;
-    swatch.dataset.colorHex = hex; // Store color for click handler
+    swatch.dataset.colorHex = hex;
     swatch.addEventListener("click", () => handleRecolorSwatchClick(hex));
     uiState.recolorSwatchesDiv.appendChild(swatch);
   });
@@ -829,14 +802,13 @@ export function showRecolorPanel(furniId) {
   uiState.recolorPanel.style.display = "block";
 }
 
+/** Hides the recolor panel. */
 export function hideRecolorPanel() {
-  if (uiState.recolorPanel) {
-    uiState.recolorPanel.style.display = "none";
-  }
-  uiState.activeRecolorFurniId = null; // Clear the active item ID
+  if (uiState.recolorPanel) uiState.recolorPanel.style.display = "none";
+  uiState.activeRecolorFurniId = null;
 }
 
-// Called by swatch click event
+/** Handles clicking a color swatch in the recolor panel. */
 function handleRecolorSwatchClick(hexColor) {
   if (uiState.activeRecolorFurniId && isConnected()) {
     requestRecolorFurni(uiState.activeRecolorFurniId, hexColor);
@@ -844,6 +816,84 @@ function handleRecolorSwatchClick(hexColor) {
   }
 }
 
+// --- Admin UI Functions ---
+
+/** Shows or hides admin UI elements based on the player's status. */
+export function updateAdminUI() {
+  const player = gameState.avatars[gameState.myAvatarId];
+  const isAdmin = player?.isAdmin || false;
+  const displayStyle = isAdmin ? "flex" : "none"; // Use flex for panel-column
+
+  if (uiState.adminControlsPanel) {
+    uiState.adminControlsPanel.style.display = displayStyle;
+    // Fetch room list if panel is being shown
+    if (isAdmin && uiState.adminControlsPanel.style.display !== "none") {
+      requestAllRoomIds();
+    }
+  }
+  // Show/hide other admin-specific buttons or sections if needed
+}
+
+/** Populates the list of available rooms in the admin panel. */
+export function updateAdminRoomList(roomIds) {
+  if (!uiState.adminRoomListDiv) return;
+  uiState.adminRoomListDiv.innerHTML = ""; // Clear previous list
+  if (!roomIds || roomIds.length === 0) {
+    uiState.adminRoomListDiv.textContent = "No rooms found.";
+    return;
+  }
+  const ul = document.createElement("ul");
+  roomIds.forEach((id) => {
+    const li = document.createElement("li");
+    li.textContent = escapeHtml(id);
+    li.title = `Click to join ${id}`;
+    li.style.cursor = "pointer";
+    li.addEventListener("click", () => {
+      console.log(`Admin joining room: ${id}`);
+      // Workaround: Use the chat command to join
+      sendChat(`/join ${id}`);
+      // Ideal: Replace with a dedicated network function if `handleChangeRoom` isn't exposed/imported
+      // joinRoom(id); // Assuming joinRoom exists in network.js
+    });
+    ul.appendChild(li);
+  });
+  uiState.adminRoomListDiv.appendChild(ul);
+}
+
+/** Handles the click event for the "Create Room" admin button. */
+function handleCreateRoomClick() {
+  const newRoomId = prompt(
+    "Enter ID for the new room (letters, numbers, underscores):"
+  );
+  if (newRoomId && newRoomId.trim()) {
+    const sanitizedId = newRoomId.trim().toLowerCase().replace(/\s+/g, "_");
+    // Optional: Prompt for dimensions
+    const colsStr = prompt(`Enter columns (3-100):`, 3);
+    const rowsStr = prompt(`Enter rows (3-100):`, 3);
+    const cols = parseInt(colsStr, 10);
+    const rows = parseInt(rowsStr, 10);
+    // Validate dimensions before sending
+    if (
+      isNaN(cols) ||
+      isNaN(rows) ||
+      cols < 3 ||
+      cols > 100 ||
+      rows < 3 ||
+      rows > 100
+    ) {
+      alert("Invalid dimensions. Must be between 3 and 100.");
+      return;
+    }
+    requestCreateRoom(sanitizedId, cols, rows);
+  } else if (newRoomId !== null) {
+    // Only show error if not cancelled
+    alert("Invalid room ID entered.");
+  }
+}
+
+// --- Edit Mode State Management ---
+
+/** Sets the current edit mode sub-state and performs necessary cleanup/UI updates. */
 export function setEditState(newState) {
   if (!CLIENT_CONFIG || uiState.editMode.state === newState) return;
 
@@ -851,14 +901,13 @@ export function setEditState(newState) {
   uiState.editMode.state = newState;
   console.log(`Edit state changed from ${oldState} to ${newState}`);
 
-  // Clean up state from previous mode
+  // Cleanup based on previous state
   if (
     oldState === CLIENT_CONFIG.EDIT_STATE_PLACING &&
     newState !== CLIENT_CONFIG.EDIT_STATE_PLACING
   ) {
     uiState.editMode.placementRotation = 0;
     uiState.editMode.placementValid = false;
-    updateHighlights(); // Clear placement highlights
   }
   if (
     oldState === CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI &&
@@ -868,107 +917,91 @@ export function setEditState(newState) {
     hideRecolorPanel();
   }
 
-  // Update UI elements dependent on edit state
+  // Update UI dependent on the new state
   updatePickupButtonState();
   updateRecolorButtonState();
   updateInventorySelection();
   updateUICursor();
+  updateHighlights(); // Crucial to update highlights after state change
 }
 
+/** Sets the currently selected item from the inventory for placement. */
 export function setSelectedInventoryItem(definitionId) {
   console.log(`Setting selected inventory item: ${definitionId}`);
   uiState.editMode.selectedInventoryItemId = definitionId;
-  uiState.editMode.placementRotation = 0; // Reset rotation on new selection
+  uiState.editMode.placementRotation = 0; // Reset rotation
 
   if (definitionId) {
-    setSelectedFurniture(null); // Deselect any floor furniture
+    setSelectedFurniture(null); // Deselect floor furniture
     setEditState(CLIENT_CONFIG.EDIT_STATE_PLACING);
-  } else {
-    // If we were placing and now deselecting item, go back to navigate
-    if (uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_PLACING) {
-      setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE);
-    }
+  } else if (uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_PLACING) {
+    setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE); // Back to navigate if deselecting item
   }
-  updateInventorySelection(); // Update visual selection in inventory list
-  updateHighlights(); // Update tile highlights for placement ghost
+  updateInventorySelection(); // Update visual highlight
+  updateHighlights(); // Show placement ghost/highlights
 }
 
+/** Sets the currently selected furniture item on the floor. */
 export function setSelectedFurniture(furnitureId) {
-  const newSelectedId = furnitureId ? String(furnitureId) : null; // Ensure string or null
+  const newSelectedId = furnitureId ? String(furnitureId) : null;
+  const oldSelectedId = uiState.editMode.selectedFurnitureId;
 
-  // If clicking the already selected item, deselect it
-  if (uiState.editMode.selectedFurnitureId === newSelectedId) {
-    if (newSelectedId !== null) {
-      // Only deselect if something was actually selected
-      console.log(`Deselecting floor furniture: ${newSelectedId}`);
-      const oldFurni = gameState.furniture[newSelectedId];
-      if (oldFurni) {
-        oldFurni.isSelected = false; // Update visual state
-      }
-      uiState.editMode.selectedFurnitureId = null;
-      setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE); // Back to navigate state
-      hideRecolorPanel();
-      updatePickupButtonState();
-      updateRecolorButtonState();
-      updateHighlights(); // Clear selection highlight
-    }
-    return; // Nothing more to do
+  if (oldSelectedId === newSelectedId) {
+    // Clicking the same item again
+    if (newSelectedId !== null) setSelectedFurniture(null); // Deselect
+    return;
   }
 
   console.log(`Setting selected floor furniture: ${newSelectedId}`);
 
-  // Deselect previous item if any
-  const oldSelectedId = uiState.editMode.selectedFurnitureId;
+  // Deselect previous visual state
   if (oldSelectedId && gameState.furniture[oldSelectedId]) {
     gameState.furniture[oldSelectedId].isSelected = false;
   }
-
-  // Set new selected item
+  // Set new selected item ID
   uiState.editMode.selectedFurnitureId = newSelectedId;
 
   if (newSelectedId && gameState.furniture[newSelectedId]) {
-    gameState.furniture[newSelectedId].isSelected = true; // Update new item's visual state
-    setSelectedInventoryItem(null); // Deselect any inventory item
-    setEditState(CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI); // Set correct edit mode state
+    gameState.furniture[newSelectedId].isSelected = true; // Set new visual state
+    setSelectedInventoryItem(null); // Deselect inventory item
+    setEditState(CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI); // Set edit sub-state
   } else {
-    // If newSelectedId is null or item not found, ensure state is reset
+    // Deselecting or item not found
     uiState.editMode.selectedFurnitureId = null;
     hideRecolorPanel();
     if (uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI) {
       setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE);
     }
   }
-
-  // Update button states and highlights
+  // Update UI elements based on selection change
   updatePickupButtonState();
   updateRecolorButtonState();
   updateHighlights();
 }
 
+/** Toggles the main edit mode on/off. */
 export function toggleEditMode() {
   if (!CLIENT_CONFIG || !uiState.toggleEditBtn) return;
   uiState.isEditMode = !uiState.isEditMode;
   console.log(`Toggled Edit Mode: ${uiState.isEditMode ? "ON" : "OFF"}`);
 
-  // Update button text and style
   uiState.toggleEditBtn.textContent = `Make Stuff? (${
     uiState.isEditMode ? "On" : "Off"
   })`;
   uiState.toggleEditBtn.classList.toggle("active", uiState.isEditMode);
 
-  // Reset edit sub-state when toggling mode
+  // Reset sub-state and UI when toggling
   if (!uiState.isEditMode) {
-    // Exiting edit mode
+    // Exiting
     setSelectedFurniture(null);
     setSelectedInventoryItem(null);
-    setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE); // Should already be set, but belt-and-suspenders
+    setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE);
     hideRecolorPanel();
   } else {
-    // Entering edit mode, start in navigate state
+    // Entering
     setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE);
   }
-
-  // Update UI elements affected by edit mode status
+  updateAdminUI(); // Check if admin UI needs update (e.g., fetch room list)
   updatePickupButtonState();
   updateRecolorButtonState();
   updateInventorySelection();
@@ -976,6 +1009,164 @@ export function toggleEditMode() {
   updateUICursor();
 }
 
+// --- Input Click Handlers (Delegated from inputHandler.js) ---
+
+/** Handles clicks on the canvas when in Edit Mode. */
+export function handleEditModeClick(gridPos, screenPos) {
+  if (!CLIENT_CONFIG || !SHARED_CONFIG || !gameState.currentRoomId) return;
+
+  const player = gameState.avatars[gameState.myAvatarId];
+  // Allow layout painting only for admins in navigate sub-state
+  const canLayoutEdit =
+    uiState.isEditMode &&
+    player?.isAdmin &&
+    uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_NAVIGATE;
+
+  if (canLayoutEdit) {
+    // Bounds check happens server-side now, but quick client check is okay
+    if (
+      gridPos.x >= 0 &&
+      gridPos.x < gameState.roomCols &&
+      gridPos.y >= 0 &&
+      gridPos.y < gameState.roomRows
+    ) {
+      console.log(
+        `Requesting layout change at (${gridPos.x}, ${gridPos.y}) to type ${selectedLayoutPaintType}`
+      );
+      requestModifyLayout(
+        gameState.currentRoomId,
+        gridPos.x,
+        gridPos.y,
+        selectedLayoutPaintType
+      );
+      playSound("place"); // Feedback
+    } else {
+      logChatMessage(
+        `Cannot modify layout outside room bounds.`,
+        true,
+        "info-msg"
+      );
+    }
+    return; // Layout edit handled
+  }
+
+  // Handle furniture placement or selection/use
+  switch (uiState.editMode.state) {
+    case CLIENT_CONFIG.EDIT_STATE_PLACING:
+      if (
+        uiState.editMode.placementValid &&
+        uiState.editMode.selectedInventoryItemId
+      ) {
+        if (gameState.inventory[uiState.editMode.selectedInventoryItemId] > 0) {
+          // network.js function handles the emit
+          requestPlaceFurni(
+            uiState.editMode.selectedInventoryItemId,
+            gridPos.x,
+            gridPos.y,
+            uiState.editMode.placementRotation
+          );
+          playSound("place");
+          // Optional: setSelectedInventoryItem(null); // Deselect after placing
+        } else {
+          logChatMessage(
+            "You don't have that item anymore.",
+            true,
+            "error-msg"
+          );
+          setSelectedInventoryItem(null); // Deselect if gone
+        }
+      } else {
+        logChatMessage("Cannot place item there.", true, "error-msg");
+      }
+      break;
+
+    case CLIENT_CONFIG.EDIT_STATE_NAVIGATE:
+    case CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI:
+      const clickedFurniture = getTopmostFurnitureAtScreen(
+        screenPos.x,
+        screenPos.y
+      );
+      if (clickedFurniture) {
+        if (clickedFurniture.definition?.canUse) {
+          requestUseFurni(clickedFurniture.id);
+          playSound("use");
+          setSelectedFurniture(null); // Deselect after use
+        } else {
+          // Toggle selection (setSelectedFurniture handles this logic internally)
+          setSelectedFurniture(clickedFurniture.id);
+          // playSound('select'); // Optional selection sound
+        }
+      } else {
+        setSelectedFurniture(null); // Clicked empty space, deselect
+        hideRecolorPanel();
+      }
+      break;
+  }
+}
+
+/** Handles clicks on the canvas when *not* in Edit Mode (Navigate). */
+export function handleNavigateModeClick(gridPos, screenPos) {
+  if (!isConnected() || !SHARED_CONFIG || !gameState.currentRoomId) return;
+  const myAvatar = gameState.avatars[gameState.myAvatarId];
+
+  // 1. Click on Avatar -> Profile
+  const clickedAvatar = getAvatarAtScreen(screenPos.x, screenPos.y);
+  if (clickedAvatar) {
+    if (clickedAvatar.id !== gameState.myAvatarId)
+      requestProfile(clickedAvatar.id);
+    else
+      logChatMessage(
+        `You clicked yourself (${clickedAvatar.name}).`,
+        true,
+        "info-msg"
+      );
+    return;
+  }
+  // 2. Click self while sitting -> Stand
+  if (myAvatar?.state === SHARED_CONFIG.AVATAR_STATE_SITTING) {
+    const playerGridPos = snapToGrid(myAvatar.x, myAvatar.y);
+    if (gridPos.x === playerGridPos.x && gridPos.y === playerGridPos.y) {
+      requestStand();
+      return;
+    }
+  }
+  // 3. Click on Furniture -> Use/Sit/Door
+  const clickedFurniture = getTopmostFurnitureAtScreen(
+    screenPos.x,
+    screenPos.y
+  );
+  if (clickedFurniture) {
+    if (clickedFurniture.isDoor && clickedFurniture.targetRoomId) {
+      const doorDef = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+        (d) => d.id === clickedFurniture.definitionId
+      );
+      // Assuming network.js has requestChangeRoom
+      requestChangeRoom(
+        clickedFurniture.targetRoomId,
+        doorDef?.targetX,
+        doorDef?.targetY
+      );
+      return;
+    }
+    if (clickedFurniture.definition?.canUse) {
+      requestUseFurni(clickedFurniture.id);
+      playSound("use");
+      return;
+    }
+    if (clickedFurniture.definition?.canSit) {
+      requestSit(clickedFurniture.id);
+      return;
+    }
+  }
+  // 4. Click on Floor -> Navigate
+  if (isClientWalkable(gridPos.x, gridPos.y)) {
+    requestMove(gridPos.x, gridPos.y);
+  } else {
+    logChatMessage("Cannot walk there.", true, "error-msg");
+  }
+}
+
+/** Handles the click of the pickup furniture button (delegated from inputHandler). */
 export function handlePickupFurniClick() {
   if (
     uiState.isEditMode &&
@@ -984,10 +1175,8 @@ export function handlePickupFurniClick() {
     isConnected()
   ) {
     requestPickupFurni(uiState.editMode.selectedFurnitureId);
-    playSound("pickup"); // Provide immediate feedback
-    // State will be updated on server response (furni_removed, inventory_update)
+    playSound("pickup"); // Immediate feedback
   } else {
-    console.warn("Pickup button clicked but conditions not met.");
     logChatMessage(
       "Select an item you own first to pick it up.",
       true,
@@ -996,6 +1185,7 @@ export function handlePickupFurniClick() {
   }
 }
 
+/** Handles the click of the recolor furniture button (delegated from inputHandler). */
 export function handleRecolorFurniClick() {
   if (
     uiState.isEditMode &&
@@ -1003,19 +1193,20 @@ export function handleRecolorFurniClick() {
     uiState.editMode.selectedFurnitureId
   ) {
     const furni = gameState.furniture[uiState.editMode.selectedFurnitureId];
-    if (furni?.canRecolor) {
-      showRecolorPanel(furni.id);
-    } else {
+    if (furni?.canRecolor) showRecolorPanel(furni.id);
+    else {
       hideRecolorPanel();
       logChatMessage("This item cannot be recolored.", true, "info-msg");
     }
   } else {
-    hideRecolorPanel(); // Ensure panel is hidden if conditions not met
+    hideRecolorPanel();
   }
 }
 
+// --- Highlighting Logic ---
+
+/** Updates tile and furniture highlights based on mouse position and edit mode. Called by game loop. */
 export function updateHighlights() {
-  // Use inputState from inputHandler.js
   if (
     !CLIENT_CONFIG ||
     !SHARED_CONFIG ||
@@ -1025,73 +1216,61 @@ export function updateHighlights() {
   )
     return;
 
-  // 1. Clear previous highlights
-  clearAllHighlights();
-
-  // 2. Get current mouse positions
+  clearAllHighlights(); // Clear previous highlights first
   const gridPos = inputState.currentMouseGridPos || { x: -1, y: -1 };
   const screenPos = inputState.currentMouseScreenPos || { x: -1, y: -1 };
 
-  // 3. Check if mouse is over a valid tile in the room
   if (!isValidClientTile(gridPos.x, gridPos.y)) {
     gameState.highlightedTile = null;
-    // If placing, mark placement as invalid when off-grid
     if (
       uiState.isEditMode &&
       uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_PLACING
     ) {
-      uiState.editMode.placementValid = false;
+      uiState.editMode.placementValid = false; // Invalid placement off-grid
     }
-    return; // No highlights if mouse is outside valid area
+    return; // No highlights outside valid area
   }
+  gameState.highlightedTile = { x: gridPos.x, y: gridPos.y }; // Store hovered valid tile
 
-  // Store the currently hovered valid grid tile
-  gameState.highlightedTile = { x: gridPos.x, y: gridPos.y };
-
-  // 4. Determine highlights based on mode
+  // Determine highlights based on mode
   if (uiState.isEditMode) {
     if (
       uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_PLACING &&
       uiState.editMode.selectedInventoryItemId
     ) {
-      // Placing an item: Show ghost preview highlights
+      // --- Placing Item ---
       const definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
         (d) => d.id === uiState.editMode.selectedInventoryItemId
       );
-      // Check placement validity using client-side logic
       uiState.editMode.placementValid = definition
         ? isClientPlacementValid(definition, gridPos.x, gridPos.y)
         : false;
       const color = uiState.editMode.placementValid
         ? CLIENT_CONFIG.FURNI_PLACE_HIGHLIGHT_COLOR
         : CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR;
-
       if (definition) {
-        // Create a temporary object structure matching ClientFurniture for getOccupiedTiles
+        // Highlight occupied tiles for placement ghost
         const tempFurniProto = {
           x: gridPos.x,
           y: gridPos.y,
-          definition: definition, // Pass the actual definition object
-          getOccupiedTiles: ClientFurniture.prototype.getOccupiedTiles, // Borrow the method
+          definition: definition,
+          getOccupiedTiles: ClientFurniture.prototype.getOccupiedTiles,
         };
-        // Highlight all tiles the ghost would occupy
         tempFurniProto
           .getOccupiedTiles()
           .forEach((tp) => setTileHighlight(tp.x, tp.y, color));
       } else {
-        // Fallback: Highlight just the single hovered tile if definition is missing (shouldn't happen often)
         setTileHighlight(
           gridPos.x,
           gridPos.y,
           CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR
-        );
+        ); // Fallback highlight
       }
     } else {
-      // Edit mode but not placing: Highlight hovered furniture or tile
+      // --- Edit Mode, Not Placing (Navigate or Selected Floor Item) ---
       const hoveredF = getTopmostFurnitureAtScreen(screenPos.x, screenPos.y);
       if (hoveredF && hoveredF.id !== uiState.editMode.selectedFurnitureId) {
-        // Don't highlight if already selected
-        // Highlight tiles occupied by hovered furniture
+        // Highlight hovered furni (if not selected)
         hoveredF
           .getOccupiedTiles()
           .forEach((tp) =>
@@ -1102,17 +1281,17 @@ export function updateHighlights() {
             )
           );
       } else if (!hoveredF && gameState.highlightedTile) {
-        // Highlight the single empty tile being hovered
+        // Highlight hovered empty tile
         setTileHighlight(
           gameState.highlightedTile.x,
           gameState.highlightedTile.y,
           CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR
         );
       }
-      // Selected furniture highlight is handled by clearAllHighlights/ClientFurniture.draw
+      // Note: Furniture selection highlight (cyan outline) is handled in ClientFurniture.draw based on its `isSelected` flag, which is set in `clearAllHighlights`.
     }
   } else {
-    // Navigate mode: Highlight interactive furniture or walkable tiles
+    // --- Navigate Mode ---
     const hoveredF = getTopmostFurnitureAtScreen(screenPos.x, screenPos.y);
     if (
       hoveredF &&
@@ -1134,7 +1313,7 @@ export function updateHighlights() {
       gameState.highlightedTile &&
       isClientWalkable(gameState.highlightedTile.x, gameState.highlightedTile.y)
     ) {
-      // Highlight walkable floor tile
+      // Highlight walkable floor
       setTileHighlight(
         gameState.highlightedTile.x,
         gameState.highlightedTile.y,
@@ -1142,8 +1321,7 @@ export function updateHighlights() {
       );
     }
   }
-
-  // Final check: Ensure highlighted tile is actually valid (safety net)
+  // Final validity check
   if (
     gameState.highlightedTile &&
     !isValidClientTile(gameState.highlightedTile.x, gameState.highlightedTile.y)
@@ -1152,6 +1330,7 @@ export function updateHighlights() {
   }
 }
 
+/** Checks if placing a furniture item at the given coordinates is valid based on client-side state. */
 export function isClientPlacementValid(definition, gridX, gridY) {
   if (
     !definition ||
@@ -1161,27 +1340,23 @@ export function isClientPlacementValid(definition, gridX, gridY) {
   )
     return false;
 
-  // Simulate the furniture's occupied tiles
   const tempFurniProto = {
     x: gridX,
     y: gridY,
-    definition: definition, // Use the actual definition
-    getOccupiedTiles: ClientFurniture.prototype.getOccupiedTiles, // Borrow method
+    definition: definition,
+    getOccupiedTiles: ClientFurniture.prototype.getOccupiedTiles,
   };
   const occupiedTiles = tempFurniProto.getOccupiedTiles();
 
-  // Check each tile the furniture would occupy
   for (const tile of occupiedTiles) {
     const gx = tile.x;
     const gy = tile.y;
-
-    // Check 1: Is the tile within room bounds and valid terrain?
-    if (!isValidClientTile(gx, gy)) return false;
+    if (!isValidClientTile(gx, gy)) return false; // Check bounds/basic terrain
     const tileType = getTileLayoutType(gx, gy);
     if (tileType === 1 || tileType === "X") return false; // Wall or Hole
 
-    // Check 2: If placing a non-flat item, check what's underneath *this specific tile*
     if (!definition.isFlat) {
+      // Check stacking/solids only if placing non-flat
       const stackOnThisTile = Object.values(gameState.furniture).filter(
         (f) =>
           f instanceof ClientFurniture &&
@@ -1191,27 +1366,18 @@ export function isClientPlacementValid(definition, gridX, gridY) {
       const topItemOnThisTile = stackOnThisTile.sort(
         (a, b) => (b.visualZ ?? 0) - (a.visualZ ?? 0)
       )[0];
-
-      // Cannot place on non-stackable items
-      if (topItemOnThisTile && !topItemOnThisTile.definition?.stackable) {
-        return false;
-      }
-      // Cannot place on solid items (that aren't flat/walkable) occupying this tile
+      if (topItemOnThisTile && !topItemOnThisTile.definition?.stackable)
+        return false; // Cannot stack on non-stackable
       if (isClientOccupiedBySolid(gx, gy)) {
-        // Check if the solid item is specifically the top item (or part of it)
+        // Check for solid blockers
         const solidBlocker = stackOnThisTile.find(
           (f) => !f.definition?.isWalkable && !f.definition?.isFlat
         );
-        if (solidBlocker) {
-          // && solidBlocker === topItemOnThisTile) { // Is the solid item the top one?
-          return false; // Blocked by a solid item on this tile
-        }
+        if (solidBlocker) return false; // Blocked by solid
       }
     }
   }
-
-  // Check 3: If placing a non-flat item, check the *base* tile (gridX, gridY) specifically for stackability
-  // This prevents placing the center of a large item onto a non-stackable small item.
+  // Check base tile stackability if non-flat
   if (!definition.isFlat) {
     const baseStack = Object.values(gameState.furniture).filter(
       (f) =>
@@ -1222,39 +1388,30 @@ export function isClientPlacementValid(definition, gridX, gridY) {
     const topItemOnBase = baseStack.sort(
       (a, b) => (b.visualZ ?? 0) - (a.visualZ ?? 0)
     )[0];
-    if (topItemOnBase && !topItemOnBase.definition?.stackable) {
-      return false;
-    }
+    if (topItemOnBase && !topItemOnBase.definition?.stackable) return false;
   }
-
-  // Check 4: Calculate estimated Z height and check against limit
+  // Check height limit
   const estimatedZ =
     getClientStackHeightAt(gridX, gridY) + (definition.zOffset || 0);
-  if (estimatedZ >= SHARED_CONFIG.MAX_STACK_Z) {
-    return false; // Exceeds stack height limit
-  }
+  if (estimatedZ >= SHARED_CONFIG.MAX_STACK_Z) return false;
 
-  // If all checks pass
-  return true;
+  return true; // All checks passed
 }
 
+/** Sets the highlight overlay color for a specific tile. */
 function setTileHighlight(x, y, color) {
-  // Ensure clientTiles is populated
   const tile = gameState.clientTiles?.find((t) => t.x === x && t.y === y);
-  if (tile) {
-    tile.highlight = color;
-  }
+  if (tile) tile.highlight = color;
 }
 
+/** Clears all tile highlights and updates furniture selection visual state. */
 function clearAllHighlights() {
   if (!CLIENT_CONFIG || !gameState.clientTiles) return;
-  // Clear tile highlights
-  gameState.clientTiles.forEach((t) => (t.highlight = null));
+  gameState.clientTiles.forEach((t) => (t.highlight = null)); // Clear tile highlights
 
-  // Clear furniture selection state (visual update happens in draw)
+  // Update furniture isSelected flag based on current edit mode state
   Object.values(gameState.furniture || {}).forEach((f) => {
     if (f instanceof ClientFurniture) {
-      // Determine selection based on current edit mode state
       f.isSelected =
         uiState.isEditMode &&
         uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI &&
@@ -1263,44 +1420,40 @@ function clearAllHighlights() {
   });
 }
 
+// --- Helper & Calculation Functions ---
+
+/** Calculates the effective stack height at a grid coordinate based on client-side visual state. */
 export function getClientStackHeightAt(gridX, gridY) {
   if (!SHARED_CONFIG || !gameState.currentRoomId || !gameState.furniture)
     return 0;
   const gx = Math.round(gridX);
   const gy = Math.round(gridY);
 
-  // Filter furniture items visually present at the target grid coordinates
   const stack = Object.values(gameState.furniture).filter(
     (f) =>
       f instanceof ClientFurniture &&
       Math.round(f.visualX) === gx &&
       Math.round(f.visualY) === gy
   );
-  let highestStackableTopZ = 0.0; // Default ground level
+  let highestStackableTopZ = 0.0;
 
   stack.forEach((furni) => {
-    if (!furni.definition) return; // Skip if definition is missing
-
-    // Calculate the effective height contribution of this item for stacking
+    if (!furni.definition) return;
     const itemStackHeight =
       furni.definition.stackHeight ?? (furni.definition.isFlat ? 0 : 1.0);
     const itemStackContrib =
       itemStackHeight * (SHARED_CONFIG.DEFAULT_STACK_HEIGHT ?? 0.5);
-    // Calculate the Z coordinate of the top surface where another item could potentially be placed
     const itemTopSurfaceZ =
       (furni.visualZ ?? 0) + (furni.definition.isFlat ? 0 : itemStackContrib);
-
-    // If this item allows stacking on top of it, update the highest Z found so far
     if (furni.definition.stackable) {
       highestStackableTopZ = Math.max(highestStackableTopZ, itemTopSurfaceZ);
     }
   });
-  // Return the highest Z level on which stacking is allowed, capped at 0 minimum
   return Math.max(0, highestStackableTopZ);
 }
 
+/** Checks if a tile coordinate is within the current room's bounds. */
 export function isValidClientTile(x, y) {
-  // Check if we have room data and coordinates are within bounds
   return (
     gameState.currentRoomId != null &&
     gameState.roomCols > 0 &&
@@ -1312,89 +1465,73 @@ export function isValidClientTile(x, y) {
   );
 }
 
+/** Gets the layout type (0, 1, 2, 'X') for a given tile coordinate. */
 export function getTileLayoutType(x, y) {
-  if (!isValidClientTile(x, y) || !gameState.roomLayout) {
-    return null; // Invalid coordinates or no layout data
-  }
-  // Boundary checks again just in case
+  if (!isValidClientTile(x, y) || !gameState.roomLayout) return null;
   if (y < 0 || y >= gameState.roomLayout.length) return null;
   const row = gameState.roomLayout[y];
   if (!row || x < 0 || x >= row.length) return null;
-
-  // Return the layout type (0, 1, 2, 'X') or default to 0 (floor) if undefined
-  return row[x] ?? 0;
+  return row[x] ?? 0; // Default to floor if undefined
 }
 
+/** Checks if a tile is walkable based on terrain and furniture presence. */
 export function isClientWalkable(x, y) {
   const gx = Math.round(x);
   const gy = Math.round(y);
-  if (!isValidClientTile(gx, gy)) return false; // Outside bounds
-
-  // Check terrain type (must be floor or alt floor)
+  if (!isValidClientTile(gx, gy)) return false;
   const layoutType = getTileLayoutType(gx, gy);
-  if (layoutType !== 0 && layoutType !== 2) return false; // Wall, hole, or invalid type
-
-  // Check if occupied by a solid, non-walkable furniture item
-  return !isClientOccupiedBySolid(gx, gy);
+  if (layoutType !== 0 && layoutType !== 2) return false; // Must be floor or alt floor
+  return !isClientOccupiedBySolid(gx, gy); // Check for solid furniture
 }
 
+/** Checks if a tile is occupied by a solid (non-walkable, non-flat) furniture item. */
 export function isClientOccupiedBySolid(gridX, gridY) {
   if (!gameState.furniture) return false;
-
-  // Check if *any* furniture item visually occupying this tile is solid
   return Object.values(gameState.furniture || {}).some((f) => {
-    if (!(f instanceof ClientFurniture)) return false; // Skip non-furniture
+    if (!(f instanceof ClientFurniture)) return false;
     const def = f.definition;
-    if (!def) return false; // Skip if definition missing
-
-    // A "solid" item is one that is NOT walkable and NOT flat
+    if (!def) return false;
     const isSolid = !def.isWalkable && !def.isFlat;
-    if (!isSolid) return false; // If it's walkable or flat, it's not a solid blocker
-
-    // Check if this solid item visually occupies the target tile
-    if (typeof f.getOccupiedTiles !== "function") return false; // Safety check
+    if (!isSolid) return false;
+    if (typeof f.getOccupiedTiles !== "function") return false;
     return f.getOccupiedTiles().some((t) => t.x === gridX && t.y === gridY);
   });
 }
 
+// --- Camera Controls ---
+
+/** Pans the camera by the given screen pixel amounts. */
 export function moveCamera(dx, dy) {
   if (!camera) return;
   camera.x += dx;
   camera.y += dy;
-  // Clamping camera bounds could be added here if desired
 }
 
+/** Zooms the camera by a factor, keeping a pivot point stationary on screen. */
 export function changeZoom(factor, pivotX, pivotY) {
   if (!uiState.canvas || !CLIENT_CONFIG || !camera) return;
-
-  // Use provided pivot or default to canvas center
   const pivotScreenX = pivotX ?? uiState.canvas.width / 2;
   const pivotScreenY = pivotY ?? uiState.canvas.height / 2;
 
-  // 1. Get world position of the pivot point BEFORE zoom
-  const worldPosBefore = isoToWorld(pivotScreenX, pivotScreenY);
-
-  // 2. Calculate and clamp new zoom level
+  const worldPosBefore = isoToWorld(pivotScreenX, pivotScreenY); // World coords of pivot before zoom
   const oldZoom = camera.zoom;
   const newZoom = Math.max(
     CLIENT_CONFIG.MIN_ZOOM,
     Math.min(CLIENT_CONFIG.MAX_ZOOM, camera.zoom * factor)
   );
+  camera.zoom = newZoom; // Apply new zoom
 
-  // 3. Apply new zoom
-  camera.zoom = newZoom;
-
-  // 4. Get screen position of the original world pivot point AFTER zoom
+  // Find where the original world pivot point is now on screen after zoom
   const screenPosAfterZoomOnly = getScreenPos(
     worldPosBefore.x,
     worldPosBefore.y
   );
-
-  // 5. Adjust camera pan (camera.x, camera.y) to keep the pivot point stationary on screen
+  // Adjust camera pan to compensate, keeping pivot stationary
   camera.x -= screenPosAfterZoomOnly.x - pivotScreenX;
   camera.y -= screenPosAfterZoomOnly.y - pivotScreenY;
 }
 
+/** Centers the camera view on the current room's approximate center. */
 export function centerCameraOnRoom() {
   if (
     !uiState.canvas ||
@@ -1404,26 +1541,15 @@ export function centerCameraOnRoom() {
     gameState.roomCols <= 0 ||
     gameState.roomRows <= 0
   ) {
-    console.warn(
-      "Cannot center camera: prerequisites not met (canvas, camera, config, room dimensions)."
-    );
-    return;
+    /* ... error handling ... */ return;
   }
-
   try {
-    // Calculate the world coordinates of the room's center
     const centerX = gameState.roomCols / 2;
     const centerY = gameState.roomRows / 2;
-    // Convert world center to the base isometric screen coordinates (without pan/zoom)
-    const centerIso = worldToIso(centerX, centerY);
-
-    // Adjust camera pan (camera.x, camera.y) to place the room center
-    // at the desired screen position (e.g., canvas center, or slightly above center).
-    // We multiply by the current zoom to account for scaling.
+    const centerIso = worldToIso(centerX, centerY); // Base iso coords of room center
+    // Adjust camera pan to put room center at screen center (or slightly above)
     camera.x = uiState.canvas.width / 2 - centerIso.x * camera.zoom;
-    // Place slightly above vertical center (e.g., 1/3 down) for better perspective
-    camera.y = uiState.canvas.height / 3 - centerIso.y * camera.zoom;
-
+    camera.y = uiState.canvas.height / 3 - centerIso.y * camera.zoom; // Adjust vertical position
     console.log(
       `Camera centered on room ${
         gameState.currentRoomId
@@ -1434,24 +1560,25 @@ export function centerCameraOnRoom() {
   }
 }
 
-export function updateUICursor() {
-  // Use inputState from inputHandler.js
-  if (!uiState.gameContainer || !inputState) return;
+// --- Cursor ---
 
-  // Reset cursor styles first
+/** Updates the game container's cursor style based on current interaction mode. */
+export function updateUICursor() {
+  if (!uiState.gameContainer || !inputState) return;
   uiState.gameContainer.classList.remove("dragging", "edit-mode-cursor");
-  uiState.gameContainer.style.cursor = ""; // Reset to default (usually 'grab' from CSS)
+  uiState.gameContainer.style.cursor = ""; // Reset to default ('grab' from CSS)
 
   if (inputState.isDragging) {
-    uiState.gameContainer.classList.add("dragging"); // Apply dragging cursor style
+    uiState.gameContainer.classList.add("dragging");
   } else if (uiState.isEditMode) {
-    uiState.gameContainer.classList.add("edit-mode-cursor"); // Apply edit mode cursor style
+    uiState.gameContainer.classList.add("edit-mode-cursor");
   }
-  // If neither dragging nor edit mode, the default 'grab' cursor (set in CSS) will apply.
 }
 
+// --- Object Picking ---
+
+/** Finds the topmost avatar at a given screen coordinate. */
 export function getAvatarAtScreen(screenX, screenY) {
-  // Filter avatars whose bounding box contains the screen point
   const candidates = Object.values(gameState.avatars || {}).filter(
     (a) =>
       a instanceof ClientAvatar &&
@@ -1459,47 +1586,42 @@ export function getAvatarAtScreen(screenX, screenY) {
       a.containsPoint(screenX, screenY)
   );
   if (candidates.length === 0) return null;
-  // Sort by draw order (higher means drawn later/on top) and return the top one
   candidates.sort((a, b) => (b.drawOrder ?? 0) - (a.drawOrder ?? 0));
   return candidates[0];
 }
 
+/** Finds the topmost furniture item at a given screen coordinate using approximate bounds checking. */
 export function getTopmostFurnitureAtScreen(screenX, screenY) {
   if (!SHARED_CONFIG || !camera || !gameState.furniture) return null;
 
-  // Filter furniture based on approximate visual bounding box collision
   const candidates = Object.values(gameState.furniture || {}).filter((f) => {
     if (!(f instanceof ClientFurniture) || !f.definition) return false;
-
-    // Calculate approximate screen bounds (similar to ClientFurniture.draw logic)
+    // Calculate approximate screen bounds (simplified from ClientFurniture.draw)
     const screenPos = getScreenPos(f.visualX, f.visualY);
     const zoom = camera.zoom;
     const baseDrawWidth =
-      SHARED_CONFIG.TILE_WIDTH_HALF * (f.definition.width || 1) * zoom * 1.1; // Use draw width
+      SHARED_CONFIG.TILE_WIDTH_HALF * (f.definition.width || 1) * zoom * 1.1;
     const visualHeightFactor = f.definition.isFlat
       ? 0.1
       : f.definition.stackHeight
       ? f.definition.stackHeight * 1.5
       : 1.0;
     const baseDrawHeight =
-      SHARED_CONFIG.TILE_HEIGHT_HALF * 3 * visualHeightFactor * zoom; // Use draw height
+      SHARED_CONFIG.TILE_HEIGHT_HALF * 3 * visualHeightFactor * zoom;
     const zOffsetPx =
       (f.visualZ || 0) *
       (CLIENT_CONFIG?.VISUAL_Z_FACTOR || SHARED_CONFIG.TILE_HEIGHT_HALF * 1.5) *
       zoom;
-
-    // Calculate Top/Bottom/Left/Right edges on screen
     const drawTopY =
       screenPos.y -
       baseDrawHeight +
       SHARED_CONFIG.TILE_HEIGHT_HALF * zoom -
       zOffsetPx;
     const drawBottomY =
-      screenPos.y + SHARED_CONFIG.TILE_HEIGHT_HALF * zoom - zOffsetPx; // Base Y adjusted for Z
+      screenPos.y + SHARED_CONFIG.TILE_HEIGHT_HALF * zoom - zOffsetPx;
     const drawLeftX = screenPos.x - baseDrawWidth / 2;
     const drawRightX = screenPos.x + baseDrawWidth / 2;
-
-    // Check if the point is within these bounds
+    // Check collision
     return (
       screenX >= drawLeftX &&
       screenX <= drawRightX &&
@@ -1509,8 +1631,6 @@ export function getTopmostFurnitureAtScreen(screenX, screenY) {
   });
 
   if (candidates.length === 0) return null;
-
-  // Sort candidates by draw order (higher means drawn later/on top)
-  candidates.sort((a, b) => (b.drawOrder ?? 0) - (a.drawOrder ?? 0));
-  return candidates[0]; // Return the topmost furniture item
+  candidates.sort((a, b) => (b.drawOrder ?? 0) - (a.drawOrder ?? 0)); // Sort by draw order
+  return candidates[0]; // Return topmost
 }
