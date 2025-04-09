@@ -98,6 +98,11 @@ export async function loadConfig() {
       // --- Context Menu ID ---
       CONTEXT_MENU_ID: "context-menu",
 
+      // --- NEW: Notification Config ---
+      NOTIFICATION_CONTAINER_ID: "notification-container",
+      NOTIFICATION_DURATION: 3500, // Default display time in ms
+      NOTIFICATION_FADE_OUT_DURATION: 400, // Must match CSS transition duration
+
       // --- Gameplay/Visual Settings ---
       MIN_ZOOM: 0.3, // Minimum camera zoom level
       MAX_ZOOM: 2.5, // Maximum camera zoom level

@@ -79,6 +79,7 @@ export function initUIManager() {
         adminRoomList: "adminRoomListDiv",
         adminLayoutTileType: "layoutTileTypeSelector",
         debugDiv: "debugDiv", // Added mapping for debug content
+        notificationContainer: "notificationContainer", // <-- ADD THIS MAPPING
       };
       if (keyMappings[camelCaseKey]) {
         camelCaseKey = keyMappings[camelCaseKey];
@@ -102,6 +103,7 @@ export function initUIManager() {
             "bottomBar", // New critical element
             "contextMenu", // New critical element
             "roomsListContent", // Room list content is important
+            "notificationContainer", // <-- MARK AS CRITICAL
           ];
           if (criticalElements.includes(camelCaseKey)) {
             console.error(
@@ -206,6 +208,12 @@ export function initUIManager() {
     }
   } else {
     console.warn("Admin layout tile type selector not found.");
+  }
+
+  if (!uiState.notificationContainer) {
+    // Specific check
+    console.error("CRITICAL UI element missing: Notification Container");
+    allElementsFound = false;
   }
 
   updateAdminUI(); // Set initial visibility of admin button
@@ -704,10 +712,10 @@ export function populateInventory() {
         // Provide feedback if trying to place outside edit mode
         itemDiv.classList.add("flash-red");
         setTimeout(() => itemDiv.classList.remove("flash-red"), 600);
-        logChatMessage(
+        showNotification(
+          // Use notification instead of chat log
           "Enable 'Edit' mode (bottom bar) to place items!",
-          true,
-          "info-msg"
+          "info"
         );
       }
     });
@@ -849,7 +857,7 @@ function populateShopPanel() {
     buyButton.dataset.price = shopEntry.price;
     buyButton.addEventListener("click", () => {
       if (!isConnected()) {
-        logChatMessage("Not connected to server.", true, "error-msg");
+        showNotification("Not connected to server.", "error"); // Use notification
         return;
       }
       buyButton.disabled = true; // Disable immediately
@@ -1101,7 +1109,7 @@ function handleCreateRoomClick() {
     ? gameState.avatars[gameState.myAvatarId]
     : null;
   if (!player?.isAdmin) {
-    logChatMessage("Admin permissions required.", true, "error-msg");
+    showNotification("Admin permissions required.", "error"); // Use notification
     return;
   }
 
@@ -1184,7 +1192,7 @@ export function populateRoomsPanel(roomData) {
           requestChangeRoom(roomInfo.id); // Use network function
           togglePanel("rooms", false); // Close panel after clicking
         } else {
-          logChatMessage("Not connected.", true, "error-msg");
+          showNotification("Not connected.", "error"); // Use notification
         }
       });
     }
@@ -1353,10 +1361,10 @@ export function handleEditModeClick(gridPos, screenPos) {
       );
       playSound("place"); // Feedback
     } else {
-      logChatMessage(
+      showNotification(
+        // Use notification
         `Cannot modify layout outside room bounds.`,
-        true,
-        "info-msg"
+        "warning"
       );
     }
     return; // Layout edit handled
@@ -1380,15 +1388,15 @@ export function handleEditModeClick(gridPos, screenPos) {
           // Optional: Keep item selected to place multiple?
           // setSelectedInventoryItem(null); // Deselect after placing
         } else {
-          logChatMessage(
+          showNotification(
+            // Use notification
             "You don't have that item anymore.",
-            true,
-            "error-msg"
+            "error"
           );
           setSelectedInventoryItem(null); // Deselect if gone
         }
       } else {
-        logChatMessage("Cannot place item there.", true, "error-msg");
+        showNotification("Cannot place item there.", "error"); // Use notification
       }
       break;
 
@@ -1396,7 +1404,10 @@ export function handleEditModeClick(gridPos, screenPos) {
     case CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI:
       // If screenPos is null, it might be a context menu action like "Place Item Here"
       // In that case, we don't need to check for clicked furniture, assume it's placing on the gridPos tile.
-      if (screenPos === null && target?.action === "place_item_here") {
+      if (
+        screenPos === null &&
+        uiState.contextMenuTarget?.action === "place_item_here"
+      ) {
         // Handled by EDIT_STATE_PLACING block if an item is selected.
         // If no item selected, this case shouldn't happen via context menu.
       } else if (screenPos !== null) {
@@ -1448,10 +1459,10 @@ export function handleNavigateModeClick(gridPos, screenPos) {
     } else {
       // Clicking self? Maybe show own profile or do nothing?
       // requestProfile(clickedAvatar.id); // Show own profile
-      logChatMessage(
+      showNotification(
+        // Use notification
         `You clicked yourself (${escapeHtml(clickedAvatar.name)}).`,
-        true,
-        "info-msg"
+        "info"
       );
     }
     return; // Stop processing if avatar clicked
@@ -1488,7 +1499,7 @@ export function handleNavigateModeClick(gridPos, screenPos) {
       return;
     }
     // If furniture clicked but no specific action, do nothing or log info
-    // logChatMessage(`Clicked on ${escapeHtml(clickedFurniture.definition?.name || '?')}.`, true, "info-msg");
+    // showNotification(`Clicked on ${escapeHtml(clickedFurniture.definition?.name || '?')}.`, 'info');
     // If it wasn't interactive furniture, fall through to potentially walk to the tile if walkable
   }
   // 4. Click on Floor (or context menu 'Walk Here', or non-interactive furniture) -> Navigate
@@ -1496,7 +1507,7 @@ export function handleNavigateModeClick(gridPos, screenPos) {
     requestMove(gridPos.x, gridPos.y); // Server handles pathfinding/state
   } else if (!clickedFurniture) {
     // Only show error if they clicked empty non-walkable space
-    logChatMessage("Cannot walk there.", true, "error-msg");
+    showNotification("Cannot walk there.", "error"); // Use notification
   }
 }
 
@@ -1510,7 +1521,7 @@ export function handlePickupFurniClick() {
     // Optional: Clear selection immediately? Or wait for server confirmation?
     // setSelectedFurniture(null);
   } else {
-    logChatMessage("Cannot pick up item now.", true, "info-msg");
+    showNotification("Cannot pick up item now.", "info"); // Use notification
   }
 }
 
@@ -1523,10 +1534,10 @@ export function handleRecolorFurniClick() {
     if (furni?.canRecolor) {
       showRecolorPanel(furni.id); // Open the panel
     } else {
-      logChatMessage("This item cannot be recolored.", true, "info-msg");
+      showNotification("This item cannot be recolored.", "info"); // Use notification
     }
   } else {
-    logChatMessage("Cannot recolor item now.", true, "info-msg");
+    showNotification("Cannot recolor item now.", "info"); // Use notification
   }
 }
 
@@ -2458,4 +2469,68 @@ export function getTopmostFurnitureAtScreen(screenX, screenY) {
   // Sort candidates by draw order (descending) to find the topmost visually
   candidates.sort((a, b) => (b.drawOrder ?? 0) - (a.drawOrder ?? 0));
   return candidates[0]; // Return the first item after sorting (highest drawOrder)
+}
+
+// --- NEW Notification Function ---
+/**
+ * Displays a temporary notification message on the screen.
+ * @param {string} message - The text content of the notification.
+ * @param {('info'|'success'|'warning'|'error')} [type='info'] - The type of notification, affects styling.
+ * @param {number|null} [duration=null] - Custom duration in ms, or null to use default from CLIENT_CONFIG.
+ */
+export function showNotification(message, type = "info", duration = null) {
+  if (!uiState.notificationContainer || !CLIENT_CONFIG || !message) {
+    console.warn("showNotification: Container, config, or message missing.");
+    return;
+  }
+
+  const displayDuration = duration ?? CLIENT_CONFIG.NOTIFICATION_DURATION;
+  const fadeDuration = CLIENT_CONFIG.NOTIFICATION_FADE_OUT_DURATION;
+
+  // Create notification element
+  const notificationElement = document.createElement("div");
+  notificationElement.className = `toast-notification ${type}`; // Add base and type class
+  notificationElement.textContent = message; // Use textContent for safety
+
+  // Append to container (new notifications appear at the top due to flex-direction: column-reverse)
+  uiState.notificationContainer.appendChild(notificationElement);
+
+  // Automatic removal after duration
+  const removalTimeout = setTimeout(() => {
+    // Start fade-out animation
+    notificationElement.classList.add("fade-out");
+
+    // Remove from DOM after fade-out animation completes
+    const finalRemovalTimeout = setTimeout(() => {
+      notificationElement.remove();
+    }, fadeDuration);
+
+    // Store the final removal timeout ID on the element in case we need to cancel it
+    notificationElement.dataset.finalTimeoutId = finalRemovalTimeout.toString();
+  }, displayDuration);
+
+  // Store the initial removal timeout ID
+  notificationElement.dataset.removalTimeoutId = removalTimeout.toString();
+
+  // Optional: Add a click listener to dismiss early
+  notificationElement.addEventListener(
+    "click",
+    () => {
+      clearTimeout(parseInt(notificationElement.dataset.removalTimeoutId));
+      clearTimeout(parseInt(notificationElement.dataset.finalTimeoutId)); // Clear potential nested timeout
+      notificationElement.remove();
+    },
+    { once: true }
+  ); // Listener removes itself after first click
+
+  // Optional: Limit number of notifications shown?
+  const maxNotifications = 5; // Example limit
+  while (uiState.notificationContainer.children.length > maxNotifications) {
+    const oldestNotification = uiState.notificationContainer.firstChild; // Since it's column-reverse, firstChild is the oldest visually
+    if (oldestNotification) {
+      clearTimeout(parseInt(oldestNotification.dataset.removalTimeoutId));
+      clearTimeout(parseInt(oldestNotification.dataset.finalTimeoutId));
+      oldestNotification.remove();
+    }
+  }
 }

@@ -1,3 +1,5 @@
+// public/js/network.js
+
 import { SHARED_CONFIG, CLIENT_CONFIG } from "./config.js";
 import { gameState, uiState, camera } from "./gameState.js";
 import { resetLocalState } from "./main.js"; // Import the main reset function for disconnects
@@ -22,11 +24,13 @@ import {
   updateAdminRoomList, // To populate the admin room list
   populateRoomsPanel, // Added for room list population
   togglePanel, // Import togglePanel if needed (e.g., closing shop panel on disconnect)
+  showNotification, // Make sure showNotification is imported
 } from "./uiManager.js";
 import { playSound } from "./sounds.js";
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js";
 import { ClientTile } from "./gameObjects/ClientTile.js"; // Needed for room_state processing
 import { ClientFurniture } from "./gameObjects/ClientFurniture.js";
+import { escapeHtml } from "./utils.js"; // Import escapeHtml
 
 let socket = null;
 
@@ -96,7 +100,8 @@ function emitIfConnected(event, data) {
       `Attempted to emit "${event}" while disconnected. Data:`,
       data
     );
-    logChatMessage("Not connected to server.", true, "error-msg");
+    // Use notification for feedback instead of chat log
+    showNotification("Not connected to server.", "error");
   }
 }
 
@@ -226,7 +231,8 @@ async function setupSocketListeners() {
     console.log("Connected to server with ID:", socket.id);
     showLoadingOverlay("Connected. Waiting for Player Data...");
     if (uiState.debugDiv) uiState.debugDiv.textContent = "Connected...";
-    logChatMessage("Connected to server!", true, "info-msg");
+    // Don't log 'Connected' to chat, let room_state handle entry message
+    // logChatMessage("Connected to server!", true, "info-msg");
   });
 
   socket.on("disconnect", (reason) => {
@@ -590,9 +596,20 @@ async function setupSocketListeners() {
 
   socket.on("currency_update", (data) => {
     if (data && typeof data.currency === "number") {
+      const oldValue = gameState.myCurrency; // Get old value before updating
       gameState.myCurrency = data.currency;
-      updateCurrencyDisplay();
+      updateCurrencyDisplay(); // Update visual display
       updateShopButtonStates(); // Check if purchase now possible/impossible
+
+      // Example: Show notification if currency increased significantly
+      const increase = gameState.myCurrency - oldValue;
+      if (increase > 10) {
+        // Arbitrary threshold for significant increase
+        showNotification(`Received ${increase} Coins!`, "success");
+        playSound("success"); // Optional sound
+      } else if (increase > 0) {
+        // Optional: Add minor sound for small increase?
+      }
     } else console.warn("Received invalid currency update:", data);
   });
 
@@ -627,38 +644,80 @@ async function setupSocketListeners() {
 
   // --- Chat & Feedback ---
   socket.on("chat_message", (data) => {
+    // Updated logic using showNotification for simple feedback
     if (!data || typeof data.text !== "string") return;
     const avatarIdStr = data.avatarId ? String(data.avatarId) : null;
     const avatar = avatarIdStr ? gameState.avatars[avatarIdStr] : null;
-    const senderName = avatar ? avatar.name : data.avatarName || "Unknown";
-    const messageText = avatarIdStr ? `${senderName}: ${data.text}` : data.text; // Prepend sender name
-    let messageClass = data.className || "";
-    const receivedIsAdmin = data.isAdmin || false;
+    const senderName = avatar
+      ? escapeHtml(avatar.name)
+      : escapeHtml(data.avatarName || "Unknown");
 
-    if (avatar instanceof ClientAvatar) {
+    const isServerInfo =
+      !avatarIdStr &&
+      (data.className === "info-msg" || data.className === "server-msg");
+    // Identify simple, transient feedback messages from the server
+    const isSimpleFeedback =
+      isServerInfo &&
+      (data.text.startsWith("You bought") ||
+        data.text.startsWith("You received") ||
+        data.text.includes("privileges have been") || // Grant/revoke messages
+        data.text.startsWith("Room") || // Room created message
+        data.text.startsWith("Teleported") || // Teleport success
+        data.text.startsWith("Gave")); // Give success
+      // Add other patterns for simple feedback here if needed
+
+    if (isSimpleFeedback) {
+      // Show simple feedback as a notification (usually success type)
+      const type = data.text.includes("privileges have been revoked")
+        ? "info"
+        : "success"; // Adjust type if needed
+      showNotification(data.text, type);
+      playSound(type === "success" ? "success" : "info"); // Optional sounds
+    } else if (
+      avatar instanceof ClientAvatar &&
+      data.avatarId !== gameState.myAvatarId &&
+      !data.className?.includes("announcement")
+    ) {
+      // Normal chat message from another player
       avatar.say?.(data.text); // Display bubble
-      if (avatarIdStr !== gameState.myAvatarId) playSound("chat"); // Sound for others
+      logChatMessage(
+        `${senderName}: ${escapeHtml(data.text)}`,
+        false,
+        data.className
+      ); // Log to chat
+      playSound("chat");
     } else {
-      playSound("chat"); // Sound for server/announce
-    } // Sound for server/announce
-
-    if (receivedIsAdmin && data.avatarName !== "Admin")
-      messageClass += " admin-msg"; // Style admin chat
-    logChatMessage(
-      messageText,
-      avatarIdStr === gameState.myAvatarId,
-      messageClass.trim()
-    );
+      // Log own messages, announcements, admin messages, server errors etc., to chat log
+      logChatMessage(
+        data.avatarName &&
+          data.avatarName !== "Server" &&
+          data.avatarName !== "Announcement"
+          ? `${senderName}: ${escapeHtml(data.text)}`
+          : escapeHtml(data.text),
+        avatarIdStr === gameState.myAvatarId,
+        data.className
+      );
+      // Play sound only if it wasn't simple feedback handled above
+      if (!isSimpleFeedback) {
+        if (
+          avatarIdStr !== gameState.myAvatarId &&
+          !data.className?.includes("announcement")
+        )
+          playSound("chat");
+        if (data.className?.includes("announcement")) playSound("announce"); // Example sound for announcements
+        // Maybe play a different sound for admin messages?
+        if (data.className?.includes("admin-msg") && !data.text.startsWith("["))
+          playSound("admin"); // Example sound
+      }
+    }
   });
 
   socket.on("action_failed", (data) => {
     console.warn("DEBUG: Received action_failed:", JSON.stringify(data));
-    logChatMessage(
-      `Action failed: ${data.reason || "Unknown error"}`,
-      true,
-      "error-msg"
-    );
-    // playSound('error'); // Optional error sound
+    const reason = data.reason || "Unknown error";
+    // Use notification instead of chat log for transient errors
+    showNotification(`Action failed: ${reason}`, "error");
+    playSound("error"); // Optional error sound
   });
 
   // --- Error Handling & Disconnects ---

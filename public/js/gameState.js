@@ -1,3 +1,5 @@
+// public/js/gameState.js
+
 // Represents the camera's position (pan) and zoom level.
 export const camera = {
   x: 0, // Horizontal pan offset (screen pixels)
@@ -91,6 +93,9 @@ export const uiState = {
   // Context Menu
   contextMenu: null, // The main context menu div
   contextMenuTarget: null, // Stores info about the right-clicked object { type: 'avatar'|'furniture'|'tile', id?, x?, y? }
+
+  // Notification Container <--- ADD THIS LINE
+  notificationContainer: null,
 
   activePanelId: null,
 

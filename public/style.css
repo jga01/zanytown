@@ -827,6 +827,80 @@ button:disabled {
     pointer-events: none; /* Ensure bubbles don't block clicks */
 }
 
+/* --- Notification System --- */
+#notification-container {
+    position: fixed; /* Fixed position relative to viewport */
+    bottom: calc(var(--bottom-bar-height) + 15px); /* Position above bottom bar */
+    right: 20px;
+    width: 300px; /* Max width of notifications */
+    max-height: 50vh; /* Limit height */
+    z-index: 900; /* High z-index, but below context menu/panels */
+    display: flex;
+    flex-direction: column-reverse; /* Stack new notifications on top */
+    align-items: flex-end; /* Align items to the right */
+    gap: 10px;
+    pointer-events: none; /* Container doesn't block clicks */
+    overflow: hidden; /* Prevent content overflow affecting layout */
+}
+
+.toast-notification {
+    background-color: rgba(50, 50, 50, 0.9); /* Default: Dark grey */
+    color: #ffffff;
+    padding: 12px 18px;
+    border-radius: 8px;
+    border-left: 5px solid #888; /* Default border color */
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    width: fit-content; /* Adjust width to content */
+    max-width: 100%; /* Ensure it doesn't exceed container */
+    pointer-events: auto; /* Individual notifications can be interacted with if needed */
+    cursor: default;
+    opacity: 0; /* Start hidden for animation */
+    transform: translateX(100%); /* Start off-screen right */
+    animation: slideInFadeIn 0.4s ease-out forwards;
+    transition: opacity 0.4s ease-out, transform 0.4s ease-out; /* For fade-out */
+    word-wrap: break-word;
+}
+
+/* Type Modifiers */
+.toast-notification.info {
+    background-color: rgba(0, 123, 255, 0.9); /* Blue */
+    border-left-color: #0056b3;
+}
+.toast-notification.success {
+    background-color: rgba(40, 167, 69, 0.9); /* Green */
+    border-left-color: #19692c;
+}
+.toast-notification.warning {
+    background-color: rgba(255, 193, 7, 0.9); /* Yellow */
+    border-left-color: #b38600;
+    color: #333; /* Darker text for yellow */
+}
+.toast-notification.error {
+    background-color: rgba(220, 53, 69, 0.9); /* Red */
+    border-left-color: #a71d2a;
+}
+
+/* Animation for Entry */
+@keyframes slideInFadeIn {
+    from {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Class for Fade-out */
+.toast-notification.fade-out {
+    opacity: 0;
+    transform: translateX(50%); /* Optional: slide out slightly */
+}
+
 /* --- Responsive Adjustments --- */
 @media (max-width: 768px) {
     #main-header h1 { font-size: 1.4em; }
@@ -885,6 +959,19 @@ button:disabled {
 
     /* Loading overlay text size adjustment for mobile */
     #loading-message { font-size: 1.5em; }
+
+    /* --- Notification position on mobile --- */
+    #notification-container {
+        width: calc(100% - 20px); /* Wider on mobile */
+        max-width: 300px; /* Still keep a max */
+        right: 10px;
+        bottom: calc(var(--bottom-bar-height) + 10px); /* Closer to bottom bar */
+    }
+    .toast-notification {
+        width: 100%; /* Make notifications take full container width */
+        font-size: 12px; /* Slightly smaller font */
+        padding: 10px 15px;
+    }
 }
 
 /* Further adjustments for very small screens or landscape mobile */
