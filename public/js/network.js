@@ -1,5 +1,3 @@
-// public/js/network.js
-
 import { SHARED_CONFIG, CLIENT_CONFIG } from "./config.js";
 import { gameState, uiState, camera } from "./gameState.js";
 import { resetLocalState } from "./main.js"; // Import the main reset function for disconnects
@@ -14,7 +12,7 @@ import {
   setSelectedFurniture,
   hideRecolorPanel,
   setSelectedInventoryItem,
-  hideShopPanel,
+  hideShopPanel, // Keep this one
   updateInventorySelection,
   updateUICursor,
   centerCameraOnRoom,
@@ -24,7 +22,13 @@ import {
   updateAdminRoomList, // To populate the admin room list
   populateRoomsPanel, // Added for room list population
   togglePanel, // Import togglePanel if needed (e.g., closing shop panel on disconnect)
-  showNotification, // Make sure showNotification is imported
+  showNotification, // Make sure showNotification is imported (now maps to showNotificationWithActions)
+  showNotificationWithActions, // Import the advanced notification handler
+  showTradePanel, // Need function to show/update trade panel
+  hideTradePanel, // Need function to hide trade panel
+  updateTradePanelOffers, // Need function to update offers visually
+  handleTradeRequest, // Need function to display incoming request
+  updateTradeConfirmationStatus, // Need function to update confirmed visuals
 } from "./uiManager.js";
 import { playSound } from "./sounds.js";
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js";
@@ -174,6 +178,27 @@ export function requestPublicRooms() {
   emitIfConnected("request_public_rooms");
 }
 
+// --- NEW Trade Emit Functions ---
+export function requestTradeInitiate(targetAvatarId) {
+  emitIfConnected("request_trade_initiate", {
+    targetId: String(targetAvatarId),
+  });
+}
+export function respondToTradeRequest(tradeId, accepted) {
+  emitIfConnected("trade_request_response", { tradeId, accepted });
+}
+export function updateTradeOffer(tradeId, items, currency) {
+  // items should be { definitionId: quantity }
+  emitIfConnected("trade_update_offer", { tradeId, items, currency });
+}
+export function confirmTradeOffer(tradeId) {
+  emitIfConnected("trade_confirm_offer", { tradeId });
+}
+export function cancelTrade(tradeId) {
+  emitIfConnected("trade_cancel", { tradeId });
+}
+// --- End Trade Emit Functions ---
+
 // --- Admin Emitters ---
 export function requestCreateRoom(roomId, cols, rows) {
   const data = { roomId };
@@ -206,7 +231,7 @@ async function setupSocketListeners() {
   socket.off("disconnect");
   socket.off("room_state");
   socket.off("your_avatar_id");
-  socket.off("your_persistent_id"); // Added this one
+  socket.off("your_persistent_id");
   socket.off("avatar_added");
   socket.off("avatar_removed");
   socket.off("avatar_update");
@@ -224,7 +249,15 @@ async function setupSocketListeners() {
   socket.off("force_disconnect");
   socket.off("layout_tile_update");
   socket.off("all_room_ids_update");
-  socket.off("public_rooms_update"); // Added this one
+  socket.off("public_rooms_update");
+  // Add new trade listeners
+  socket.off("trade_request_incoming");
+  socket.off("trade_start");
+  socket.off("trade_offer_update");
+  socket.off("trade_confirm_update");
+  socket.off("trade_complete");
+  socket.off("trade_cancelled");
+  socket.off("trade_error");
 
   // --- Connection Lifecycle ---
   socket.on("connect", () => {
@@ -283,6 +316,7 @@ async function setupSocketListeners() {
     uiState.activeChatBubbles = [];
     hideProfilePanel();
     hideRecolorPanel();
+    hideTradePanel(); // Ensure trade panel is closed on room change
     // Shop panel is toggled, ensure it's closed if open during reset
     if (uiState.activePanelId === "shop") togglePanel("shop", false);
     // Reset edit mode state
@@ -592,6 +626,16 @@ async function setupSocketListeners() {
         : {};
     populateInventory();
     updateShopButtonStates(); // Check if purchase now possible/impossible
+    // Refresh trade inventory if trade panel is open
+    if (uiState.isTrading) {
+      // Need a function in uiManager to specifically refresh trade inventory
+      // populateTradeInventory(); // Assuming this exists and works
+      // If not, add a dedicated function in uiManager
+      if (typeof populateTradeInventory === "function") {
+        // Check if function exists before calling
+        populateTradeInventory();
+      }
+    }
   });
 
   socket.on("currency_update", (data) => {
@@ -622,7 +666,7 @@ async function setupSocketListeners() {
     showProfilePanel(profileData);
   });
 
-  // --- ADDED: Public Room List Update Handler ---
+  // --- Public Room List Update Handler ---
   socket.on("public_rooms_update", (roomData) => {
     console.log("DEBUG: Received public_rooms_update:", roomData);
     if (Array.isArray(roomData)) {
@@ -664,7 +708,7 @@ async function setupSocketListeners() {
         data.text.startsWith("Room") || // Room created message
         data.text.startsWith("Teleported") || // Teleport success
         data.text.startsWith("Gave")); // Give success
-      // Add other patterns for simple feedback here if needed
+    // Add other patterns for simple feedback here if needed
 
     if (isSimpleFeedback) {
       // Show simple feedback as a notification (usually success type)
@@ -719,6 +763,89 @@ async function setupSocketListeners() {
     showNotification(`Action failed: ${reason}`, "error");
     playSound("error"); // Optional error sound
   });
+
+  // --- NEW Trade Listeners ---
+  socket.on("trade_request_incoming", (data) => {
+    // data = { tradeId, requesterId, requesterName }
+    if (data && data.tradeId && data.requesterName) {
+      // Call uiManager function to show the notification/popup
+      handleTradeRequest(data.tradeId, data.requesterName);
+    } else {
+      console.warn("Invalid trade_request_incoming data:", data);
+    }
+  });
+
+  socket.on("trade_start", (data) => {
+    // data = { tradeId, partnerId, partnerName }
+    if (data && data.tradeId && data.partnerId && data.partnerName) {
+      // Call uiManager function to open the trade panel
+      showTradePanel(data.tradeId, data.partnerId, data.partnerName);
+      playSound("success"); // Sound for trade starting
+    } else {
+      console.warn("Invalid trade_start data:", data);
+    }
+  });
+
+  socket.on("trade_offer_update", (data) => {
+    // data = { tradeId, isMyOffer, offer: { items: {}, currency: 0 } }
+    // Also includes confirmation status reset: myConfirmed: bool, partnerConfirmed: bool
+    if (
+      uiState.isTrading &&
+      uiState.tradeSession.tradeId === data.tradeId &&
+      data.offer
+    ) {
+      // Call uiManager function to update the visual offer display
+      updateTradePanelOffers(data.isMyOffer, data.offer);
+      // Reset confirmations visually whenever an offer changes
+      updateTradeConfirmationStatus(false, false);
+      if (uiState.tradeConfirmBtn) uiState.tradeConfirmBtn.disabled = true; // Disable confirm until both re-confirm
+    }
+  });
+
+  socket.on("trade_confirm_update", (data) => {
+    // data = { tradeId, myConfirmed, partnerConfirmed }
+    if (uiState.isTrading && uiState.tradeSession.tradeId === data.tradeId) {
+      // Update the visual confirmation status in the UI
+      updateTradeConfirmationStatus(data.myConfirmed, data.partnerConfirmed);
+    }
+  });
+
+  socket.on("trade_complete", (data) => {
+    // data = { tradeId, message: "Trade completed successfully!" }
+    if (uiState.isTrading && uiState.tradeSession.tradeId === data.tradeId) {
+      hideTradePanel();
+      showNotification(data.message || "Trade complete!", "success");
+      playSound("success"); // Success sound
+      // Inventory/currency updates will arrive separately via inventory_update/currency_update
+    }
+  });
+
+  socket.on("trade_cancelled", (data) => {
+    // data = { tradeId, reason }
+    if (uiState.isTrading && uiState.tradeSession.tradeId === data.tradeId) {
+      hideTradePanel();
+      showNotification(
+        `Trade cancelled: ${data.reason || "Unknown reason"}`,
+        "warning"
+      );
+      playSound("error"); // Use error/cancel sound
+    }
+  });
+
+  socket.on("trade_error", (data) => {
+    // data = { reason } - General error related to trading not covered by action_failed
+    showNotification(
+      `Trade Error: ${data.reason || "An error occurred"}`,
+      "error"
+    );
+    playSound("error");
+    // Optionally hide trade panel if an error occurs mid-trade
+    if (uiState.isTrading) {
+      hideTradePanel();
+    }
+  });
+
+  // --- End Trade Listeners ---
 
   // --- Error Handling & Disconnects ---
   socket.on("connect_error", (err) => {

@@ -1,5 +1,3 @@
-// public/js/gameState.js
-
 // Represents the camera's position (pan) and zoom level.
 export const camera = {
   x: 0, // Horizontal pan offset (screen pixels)
@@ -67,6 +65,7 @@ export const uiState = {
   roomsPanel: null,
   adminPanel: null,
   debugPanel: null,
+  shopPanel: null, // Added shopPanel here
 
   // Content Elements *within* Toggled Panels
   inventoryItemsDiv: null, // Div inside inventoryPanel for item elements
@@ -76,8 +75,9 @@ export const uiState = {
   layoutTileTypeSelector: null, // Radio group inside adminPanel
   debugDiv: null, // Div inside debugPanel for text content
   createRoomBtn: null, // Button inside adminPanel
+  shopItemsDiv: null, // Added shopItemsDiv
 
-  // Existing Floating Panels (Popups)
+  // Floating Panels (Popups)
   profilePanel: null,
   profileContent: null,
   profileCloseBtn: null,
@@ -86,18 +86,33 @@ export const uiState = {
   recolorItemNameP: null,
   recolorCloseBtn: null,
   recolorResetBtn: null,
-  shopPanel: null, // Note: Shop is now a toggled panel, this might be redundant if refactored fully
-  shopItemsDiv: null, // Content div inside shopPanel
-  shopCloseBtn: null, // Close button for the shop panel
+  // Note: shopCloseBtn removed as shop is now a toggled panel
 
   // Context Menu
   contextMenu: null, // The main context menu div
   contextMenuTarget: null, // Stores info about the right-clicked object { type: 'avatar'|'furniture'|'tile', id?, x?, y? }
 
-  // Notification Container <--- ADD THIS LINE
+  // Notification Container
   notificationContainer: null,
 
-  activePanelId: null,
+  // ===== START: TRADE PANEL References =====
+  tradePanel: null,
+  tradeCloseBtn: null,
+  tradePartnerNameSpan: null, // Span in header h4
+  tradePartnerNameDisplaySpan: null, // Span in partner offer h5
+  selfTradeOfferDiv: null, // Container for self offer
+  partnerTradeOfferDiv: null, // Container for partner offer
+  selfTradeCurrencyInput: null,
+  partnerTradeCurrencyInput: null,
+  tradeInventoryAreaDiv: null, // Container for clickable inventory in trade panel
+  selfTradeStatusSpan: null, // "Confirmed" indicator
+  partnerTradeStatusSpan: null, // "Confirmed" indicator
+  tradeConfirmBtn: null,
+  tradeCancelBtn: null,
+  // Note: Item grids within offer areas will be queried dynamically
+  // ===== END: TRADE PANEL References =====
+
+  activePanelId: null, // Tracks the ID suffix of the currently open panel (e.g., 'inventory', 'shop')
 
   // --- UI Data / Flags ---
   activeChatBubbles: [], // Array stores { id, text, endTime, avatarId, element } for positioning/removal
@@ -113,6 +128,20 @@ export const uiState = {
     placementRotation: 0, // Direction (0-7) for placement ghost/request
   },
   activeRecolorFurniId: null, // furniture DB ID string of the item currently being recolored
+
+  // ===== START: TRADE State Flags =====
+  isTrading: false, // Is the trade panel currently open?
+  tradeSession: {
+    // Info about the current trade session
+    tradeId: null, // Unique ID from server
+    partnerId: null, // Avatar ID of the trade partner
+    partnerName: null,
+    myOffer: { items: {}, currency: 0 }, // { definitionId: quantity }
+    partnerOffer: { items: {}, currency: 0 },
+    myConfirmed: false,
+    partnerConfirmed: false,
+  },
+  // ===== END: TRADE State Flags =====
 };
 
 /**
@@ -134,4 +163,16 @@ export function initializeGameState(clientConfig) {
   // Initialize other states if needed based on config defaults
   // Example:
   // gameState.myCurrency = clientConfig?.STARTING_CURRENCY || 0;
+
+  // Reset trade state too
+  uiState.isTrading = false;
+  uiState.tradeSession = {
+    tradeId: null,
+    partnerId: null,
+    partnerName: null,
+    myOffer: { items: {}, currency: 0 },
+    partnerOffer: { items: {}, currency: 0 },
+    myConfirmed: false,
+    partnerConfirmed: false,
+  };
 }

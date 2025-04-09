@@ -4,28 +4,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- MODIFIED: Title -->
-    <title>ZanyTown - Modernized!</title>
-    <!-- MODIFIED: Use new style.css -->
+    <title>ZanyTown</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Load Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
 </head>
 
 <body>
-    <!-- MODIFIED: New App Wrapper Structure -->
     <div id="app-wrapper">
 
-        <!-- Loading Overlay (Remains similar, styled by CSS) -->
+        <!-- Loading Overlay -->
         <div id="loading-overlay">
             <div id="loading-message">Initializing ZanyTown...</div>
-            <div class="spinner"></div> <!-- Added spinner -->
+            <div class="spinner"></div>
         </div>
-        <!-- End Loading Overlay -->
 
-        <!-- Header Bar (Remains similar, styled by CSS) -->
+        <!-- Header Bar -->
         <header id="main-header">
             <h1>🤪 ZanyTown! 🤪</h1>
             <div id="room-name-display" class="header-info">Room: Loading...</div>
@@ -33,53 +28,43 @@
             <button id="logout-btn" title="Log out and return to login screen">Bye Bye!</button>
         </header>
 
-        <!-- Main Content Area (Contains Game World) -->
+        <!-- Main Content Area -->
         <main id="main-content">
 
-            <!-- Game World (Canvas + Overlays) -->
+            <!-- Game World -->
             <div id="game-world">
-                <!-- Container for Canvas and Absolutely Positioned Panels -->
                 <div id="game-container">
                     <canvas id="gameCanvas">
                         Uh oh! Your browser doesn't support the magic canvas!
                     </canvas>
-                    <!-- Chat Bubbles Container (Overlays Canvas) -->
                     <div id="chat-bubbles-container"></div>
 
-                    <!-- START: Toggled Panels (Positioned over canvas, initially hidden) -->
-
-                    <!-- Inventory Panel -->
+                    <!-- START: Toggled Panels -->
                     <div id="inventory-panel" class="toggle-panel ui-panel panel-column right" style="display: none;">
-                        <button class="close-panel-btn" data-panel-id="inventory-panel" title="Close Inventory">X</button>
-                        <h4>Your Junk</h4>
-                        <div id="inventory-items" class="panel-content-scrollable">
-                            <p><i>Connecting...</i></p>
-                        </div>
-                    </div>
-
-                    <!-- User List Panel -->
-                    <div id="user-list-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
-                        <button class="close-panel-btn" data-panel-id="user-list-panel" title="Close Users">X</button>
-                        <h4>Who's Here?</h4>
-                        <ul id="user-list-content" class="panel-content-scrollable">
-                            <li><i>Joining room...</i></li>
-                        </ul>
-                    </div>
-
-                    <!-- Rooms Panel -->
-                     <div id="rooms-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
-                          <button class="close-panel-btn" data-panel-id="rooms-panel" title="Close Rooms">X</button>
-                          <h4>Rooms</h4>
-                          <div id="rooms-list-content" class="panel-content-scrollable">
-                              <p><i>Fetching rooms...</i></p>
-                          </div>
-                      </div>
-
-                    <!-- Admin Panel -->
-                    <div id="admin-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
-                         <button class="close-panel-btn" data-panel-id="admin-panel" title="Close Admin">X</button>
-                         <h4>Admin Powers</h4>
-                         <div class="panel-content-scrollable">
+                       <button class="close-panel-btn" data-panel-id="inventory-panel" title="Close Inventory">X</button>
+                       <h4>Your Junk</h4>
+                       <div id="inventory-items" class="panel-content-scrollable">
+                           <p><i>Connecting...</i></p>
+                       </div>
+                   </div>
+                   <div id="user-list-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                       <button class="close-panel-btn" data-panel-id="user-list-panel" title="Close Users">X</button>
+                       <h4>Who's Here?</h4>
+                       <ul id="user-list-content" class="panel-content-scrollable">
+                           <li><i>Joining room...</i></li>
+                       </ul>
+                   </div>
+                   <div id="rooms-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                       <button class="close-panel-btn" data-panel-id="rooms-panel" title="Close Rooms">X</button>
+                       <h4>Rooms</h4>
+                       <div id="rooms-list-content" class="panel-content-scrollable">
+                           <p><i>Fetching rooms...</i></p>
+                       </div>
+                   </div>
+                   <div id="admin-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                       <button class="close-panel-btn" data-panel-id="admin-panel" title="Close Admin">X</button>
+                       <h4>Admin Powers</h4>
+                        <div class="panel-content-scrollable">
                              <button id="create-room-btn" title="Create a new empty room">Create Room</button>
                              <div id="admin-room-section" class="admin-section">
                                  <h5>Available Rooms</h5>
@@ -98,18 +83,23 @@
                                  <p class="admin-instruction">(In Edit Mode, click tiles on map to paint)</p>
                              </div>
                          </div>
-                    </div>
+                   </div>
+                   <div id="debug-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                       <button class="close-panel-btn" data-panel-id="debug-panel" title="Close Debug">X</button>
+                       <h4>Nerd Stuff</h4>
+                       <div id="debug-content" class="panel-content-scrollable">Initializing...</div>
+                   </div>
+                   <div id="shop-panel" class="toggle-panel ui-panel panel-column right" style="display: none;">
+                       <button class="close-panel-btn" data-panel-id="shop-panel" title="Close Shop">X</button>
+                       <h4>Gizmo-Mart</h4>
+                       <div id="shop-items" class="panel-content-scrollable">
+                           <p><i>Stocking shelves...</i></p>
+                       </div>
+                   </div>
+                    <!-- END: Toggled Panels -->
 
-                    <!-- Debug Panel -->
-                     <div id="debug-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
-                         <button class="close-panel-btn" data-panel-id="debug-panel" title="Close Debug">X</button>
-                         <h4>Nerd Stuff</h4>
-                         <div id="debug-content" class="panel-content-scrollable">Initializing...</div>
-                     </div>
-                     <!-- END: Toggled Panels -->
 
-
-                    <!-- START: Floating Panels (Profile, Recolor) -->
+                    <!-- START: Floating Panels -->
                     <div id="profile-panel" class="ui-panel floating-panel" style="display: none;">
                          <button id="profile-close-btn" class="close-btn" title="Close Profile">X</button>
                          <h4>Who Dat?</h4>
@@ -124,26 +114,52 @@
                          </div>
                          <button id="recolor-reset-btn" title="Reset to boring default color">Go Back!</button>
                      </div>
-                     <!-- Shop Panel - Now a Toggle Panel -->
-                     <div id="shop-panel" class="toggle-panel ui-panel panel-column right" style="display: none;">
-                         <button class="close-panel-btn" data-panel-id="shop-panel" title="Close Shop">X</button>
-                         <h4>Gizmo-Mart</h4>
-                         <div id="shop-items" class="panel-content-scrollable">
-                             <p><i>Stocking shelves...</i></p>
+
+                     <!-- ===== START: TRADE PANEL ===== -->
+                     <div id="trade-panel" class="ui-panel floating-panel" style="display: none;">
+                         <button id="trade-close-btn" class="close-btn" title="Cancel Trade">X</button>
+                         <h4>Trade with <span id="trade-partner-name">...</span></h4>
+                         <div class="trade-window">
+                             <!-- Left Side: Your Offer & Inventory -->
+                             <div class="trade-side trade-self">
+                                 <h5>Your Offer <span id="self-trade-status" class="trade-status"></span></h5>
+                                 <div id="self-trade-offer" class="trade-offer-area">
+                                     <div class="trade-items-grid"></div>
+                                     <div class="trade-currency">
+                                         <label>Coins: <input type="number" id="self-trade-currency" min="0" value="0"></label>
+                                     </div>
+                                 </div>
+                                 <h5>Your Inventory (Click to Add)</h5>
+                                 <div id="trade-inventory-area" class="trade-inventory-list">
+                                     <p><i>Loading...</i></p>
+                                 </div>
+                             </div>
+                             <!-- Right Side: Partner's Offer -->
+                             <div class="trade-side trade-partner">
+                                 <h5><span id="trade-partner-name-display">Partner</span>'s Offer <span id="partner-trade-status" class="trade-status"></span></h5>
+                                 <div id="partner-trade-offer" class="trade-offer-area read-only">
+                                     <div class="trade-items-grid"></div>
+                                     <div class="trade-currency">
+                                         <label>Coins: <input type="number" id="partner-trade-currency" min="0" value="0" readonly></label>
+                                     </div>
+                                 </div>
+                             </div>
+                         </div>
+                         <div class="trade-actions">
+                            <button id="trade-confirm-btn">Confirm Trade</button>
+                            <button id="trade-cancel-btn" class="cancel-btn">Cancel Trade</button>
                          </div>
                      </div>
+                     <!-- ===== END: TRADE PANEL ===== -->
+
                      <!-- END: Floating Panels -->
 
-                    <!-- Context Menu (Initially Hidden, positioned by JS) -->
-                    <div id="context-menu" style="display: none;">
-                        <ul>
-                            <!-- Items populated by JS -->
-                        </ul>
-                    </div>
+                    <!-- Context Menu -->
+                    <div id="context-menu" style="display: none;"><ul></ul></div>
 
                 </div> <!-- End #game-container -->
 
-                <!-- Chat Area (Below Canvas Container) -->
+                <!-- Chat Area -->
                 <div id="chat-area">
                     <div id="chat-log"></div>
                     <input type="text" id="chat-input" placeholder="Say something zany! Or type /help" autocomplete="off">
@@ -152,27 +168,22 @@
 
         </main> <!-- End #main-content -->
 
-        <!-- NEW: Bottom Bar -->
+        <!-- Bottom Bar -->
         <footer id="bottom-bar">
             <button id="toggle-inventory-btn" class="bottom-bar-btn" title="Inventory (I)"><span class="icon">🎒</span><span class="label">Junk</span></button>
             <button id="toggle-rooms-btn" class="bottom-bar-btn" title="Rooms"><span class="icon">🚪</span><span class="label">Rooms</span></button>
             <button id="toggle-users-btn" class="bottom-bar-btn" title="Users"><span class="icon">👥</span><span class="label">Users</span></button>
             <button id="toggle-shop-btn" class="bottom-bar-btn" title="Shop"><span class="icon">🛒</span><span class="label">Shop</span></button>
             <button id="toggle-edit-bottom-btn" class="bottom-bar-btn" title="Toggle Build/Edit Mode (E)"><span class="icon">🔨</span><span class="label">Edit</span></button>
-            <!-- Conditional Admin Button -->
             <button id="toggle-admin-btn" class="bottom-bar-btn" title="Admin Panel" style="display: none;"><span class="icon">👑</span><span class="label">Admin</span></button>
-             <!-- Debug Toggle Button -->
              <button id="toggle-debug-btn" class="bottom-bar-btn" title="Toggle Debug Info"><span class="icon">🐞</span><span class="label">Debug</span></button>
         </footer>
 
-        <!-- NEW: Notification Container -->
-        <div id="notification-container">
-            <!-- Notifications will be added here by JS -->
-        </div>
+        <!-- Notification Container -->
+        <div id="notification-container"></div>
 
     </div> <!-- End #app-wrapper -->
 
-    <!-- Scripts Remain the Same -->
     <script src="/socket.io/socket.io.js"></script>
     <script type="module" src="js/main.js"></script>
 </body>

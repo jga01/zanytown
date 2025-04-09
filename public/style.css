@@ -1,9 +1,3 @@
-/**
- * public/style.css
- *
- * Stylesheet for ZanyTown UI Overhaul
- */
-
 /* --- ZanyTown Theme --- */
 @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Quicksand:wght@400;600&display=swap');
 
@@ -900,6 +894,258 @@ button:disabled {
     opacity: 0;
     transform: translateX(50%); /* Optional: slide out slightly */
 }
+
+/* --- Trade Panel Styles --- */
+#trade-panel {
+    width: 90%; /* Wider panel */
+    max-width: 750px;
+    min-width: 600px; /* Ensure enough space */
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border-color: var(--accent-color-orange); /* Distinct border */
+    background-color: rgba(255, 245, 230, 0.98); /* Light orange-ish */
+    max-height: 85vh;
+    display: none; /* Hidden by default */
+    flex-direction: column; /* Ensure panel structure works */
+    overflow: hidden; /* Prevent inner content overflow affecting panel */
+}
+
+#trade-panel h4 { /* Header */
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+#trade-panel h5 { /* Sub-headers for Offer/Inventory */
+    font-size: 1.1em;
+    margin-bottom: 8px;
+    color: var(--text-darker);
+    border-bottom: 1px solid var(--accent-color-orange);
+    padding-bottom: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.trade-status { /* "Confirmed" text */
+    font-size: 0.8em;
+    font-weight: bold;
+    color: var(--text-success);
+    background-color: rgba(34, 139, 34, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 10px;
+    display: none; /* Hidden by default */
+}
+.trade-status.visible { display: inline-block; }
+
+.trade-window {
+    display: flex;
+    gap: 20px;
+    flex-grow: 1; /* Allow window to fill space */
+    margin-bottom: 15px;
+    overflow: hidden; /* Prevent inner scrollbars fighting */
+}
+
+.trade-side {
+    flex: 1; /* Each side takes half the space */
+    display: flex;
+    flex-direction: column;
+    border: 2px dashed var(--accent-color-orange-dark);
+    border-radius: 8px;
+    padding: 10px;
+    background-color: rgba(255, 255, 255, 0.6);
+    overflow: hidden; /* Prevent side overflow */
+}
+
+.trade-offer-area {
+    min-height: 150px; /* Minimum height for offer area */
+    max-height: 200px; /* Limit height */
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin-bottom: 15px;
+    background-color: rgba(255, 250, 240, 0.8); /* FloralWhite */
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Contain scrollbar */
+}
+.trade-offer-area.read-only {
+    background-color: rgba(230, 230, 230, 0.7); /* Grey out read-only */
+}
+.trade-offer-area.confirmed {
+    border: 2px solid var(--text-success);
+    box-shadow: inset 0 0 8px rgba(34, 139, 34, 0.2);
+}
+
+
+.trade-items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); /* Responsive grid */
+    gap: 8px;
+    flex-grow: 1; /* Allow grid to take space */
+    overflow-y: auto; /* Scroll if many items */
+    padding-bottom: 10px; /* Space before currency */
+    min-height: 80px; /* Ensure some space even when empty */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+.trade-items-grid::-webkit-scrollbar { width: 8px; }
+.trade-items-grid::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px;}
+.trade-items-grid::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 4px; }
+
+.trade-inventory-list {
+    flex-grow: 1; /* Takes remaining space in self side */
+    overflow-y: auto;
+    padding: 5px;
+    background-color: rgba(240, 255, 255, 0.7); /* Azure */
+    border: 1px solid var(--accent-color-blue);
+    border-radius: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+.trade-inventory-list::-webkit-scrollbar { width: 8px; }
+.trade-inventory-list::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px;}
+.trade-inventory-list::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 4px; }
+
+/* Items in trade grid or inventory list */
+.trade-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #ccc;
+    padding: 4px;
+    border-radius: 5px;
+    background-color: #fff;
+    position: relative;
+    cursor: pointer;
+    width: 45px; /* Fixed size for grid items */
+    height: 55px;
+    box-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+}
+.trade-inventory-list .trade-item { /* Style for items in inventory list */
+    width: auto; /* Auto width */
+    height: auto;
+    flex-direction: row; /* Horizontal layout */
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background-color: rgba(220, 240, 255, 0.9);
+}
+
+
+.trade-item-preview {
+    width: 28px;
+    height: 28px;
+    background-color: #888; /* Placeholder */
+    border: 1px solid #555;
+    border-radius: 4px;
+    flex-shrink: 0;
+    margin-bottom: 3px; /* Space below preview in grid */
+}
+.trade-inventory-list .trade-item-preview { margin-bottom: 0; }
+
+.trade-item-name { /* For inventory list view */
+    font-size: 12px;
+    text-align: left;
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.trade-item-quantity {
+    font-size: 10px;
+    color: #555;
+    text-align: center;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+.trade-inventory-list .trade-item-quantity {
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: auto; /* Push quantity to right */
+    background-color: rgba(0,0,0,0.05);
+    padding: 1px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+
+.trade-offer-area .trade-item:hover::after { /* Tooltip for removing */
+    content: 'Click to Remove';
+    position: absolute;
+    bottom: -18px; left: 50%; transform: translateX(-50%);
+    background-color: rgba(0,0,0,0.7); color: white; padding: 2px 5px;
+    border-radius: 3px; font-size: 10px; white-space: nowrap;
+    z-index: 1;
+}
+.trade-inventory-list .trade-item:hover::after { /* Tooltip for adding */
+     content: 'Click to Add to Offer';
+     position: absolute;
+     bottom: -18px; left: 50%; transform: translateX(-50%);
+     background-color: rgba(0,0,0,0.7); color: white; padding: 2px 5px;
+     border-radius: 3px; font-size: 10px; white-space: nowrap;
+     z-index: 1;
+ }
+
+.trade-currency {
+    margin-top: 10px;
+    text-align: center;
+    flex-shrink: 0; /* Prevent shrinking */
+}
+.trade-currency label {
+    font-size: 13px;
+    font-weight: 600;
+}
+.trade-currency input[type="number"] {
+    width: 80px;
+    padding: 4px 6px;
+    margin-left: 5px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    text-align: right;
+}
+.trade-currency input:read-only {
+    background-color: #eee;
+    cursor: not-allowed;
+}
+
+.trade-actions {
+    display: flex;
+    justify-content: space-around;
+    padding-top: 15px;
+    border-top: 1px solid var(--accent-color-orange);
+    flex-shrink: 0; /* Prevent shrinking */
+}
+#trade-confirm-btn {
+    background-color: var(--accent-color-green);
+    border-color: var(--accent-color-green-dark);
+    color: white;
+}
+#trade-confirm-btn:hover:not(:disabled) { background-color: var(--accent-color-green-dark); }
+#trade-cancel-btn,
+#trade-panel .cancel-btn { /* Style cancel buttons */
+    background-color: var(--accent-color-red);
+    border-color: var(--accent-color-red-dark);
+    color: white;
+}
+#trade-cancel-btn:hover:not(:disabled) { background-color: var(--accent-color-red-dark); }
+
+
+/* --- End Trade Panel Styles --- */
+
+/* Adjust context menu trade item */
+#context-menu li[data-action="trade"] {
+    color: var(--accent-color-purple); /* Make trade stand out */
+    font-weight: 600;
+}
+#context-menu li[data-action="trade"]:hover {
+     background-color: var(--accent-color-purple);
+     color: white;
+ }
 
 /* --- Responsive Adjustments --- */
 @media (max-width: 768px) {

@@ -3,12 +3,13 @@
 // --- Application Modules ---
 const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config");
 const { ServerAvatar, ServerFurniture } = require("./lib/game_objects");
-const { rotateDirection, escapeHtml } = require("./lib/utils"); // Added escapeHtml
+const { rotateDirection, escapeHtml } = require("./lib/utils");
 const Furniture = require("./models/furniture"); // Database model
-const User = require("./models/user"); // Import User model (needed in handleConnection)
-const { findAvatarGlobally } = require("./server_console"); // For admin commands
+const User = require("./models/user"); // Import User model
+const { findAvatarGlobally } = require("./server_console");
 const RoomState = require("./models/roomState");
 const ServerRoom = require("./lib/room");
+const mongoose = require("mongoose"); // Needed for transactions / ObjectId
 
 // --- Globals passed from server.js ---
 let rooms; // Map<roomId, ServerRoom>
@@ -18,6 +19,71 @@ let clients; // Map: socket.id -> { socket, avatarId (runtime), userId (persiste
 // --- Stored DB Helper Functions ---
 let findUserById; // Will hold findUserByIdFromDB reference
 let updateUser; // Will hold updateUserInDB reference
+
+// --- NEW Trade State Management ---
+const activeTrades = new Map(); // tradeId -> { tradeId, p1: { socketId, userId, avatarId, name, offer: {items, currency}, confirmed }, p2: { ... }, startTime }
+
+function generateTradeId() {
+  return `trade_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+}
+
+// Helper to get trade participant info
+function getParticipantInfo(socketId) {
+  const clientInfo = clients[socketId];
+  if (!clientInfo) return null;
+  const { avatar } = getAvatarAndRoom(socketId); // Use existing helper
+  if (!avatar) return null;
+  return {
+    socketId: socketId,
+    userId: clientInfo.userId,
+    avatarId: avatar.id,
+    name: avatar.name,
+    offer: { items: {}, currency: 0 }, // Initial empty offer
+    confirmed: false,
+  };
+}
+
+// Helper to find which trade a socket is involved in
+function findTradeBySocketId(socketId) {
+  for (const trade of activeTrades.values()) {
+    if (trade.p1.socketId === socketId || trade.p2.socketId === socketId) {
+      return trade;
+    }
+  }
+  return null;
+}
+
+// Helper to safely end a trade and notify participants
+function endTradeSession(tradeId, reason, notifySocketId = null) {
+  const trade = activeTrades.get(tradeId);
+  if (!trade) return;
+
+  console.log(`Ending trade ${tradeId}. Reason: ${reason}`);
+  activeTrades.delete(tradeId); // Remove from active trades
+
+  // Notify both participants
+  const p1Socket = clients[trade.p1.socketId]?.socket;
+  const p2Socket = clients[trade.p2.socketId]?.socket;
+
+  if (p1Socket) p1Socket.emit("trade_cancelled", { tradeId, reason });
+  if (p2Socket) p2Socket.emit("trade_cancelled", { tradeId, reason });
+
+  // If initiated by one player (e.g., cancel button), send specific error to other
+  if (notifySocketId) {
+    const otherSocket =
+      notifySocketId === trade.p1.socketId ? p2Socket : p1Socket;
+    const initiatorName =
+      notifySocketId === trade.p1.socketId ? trade.p1.name : trade.p2.name;
+    if (otherSocket) {
+      // Overwrite generic reason for the other player
+      otherSocket.emit("trade_cancelled", {
+        tradeId,
+        reason: `${escapeHtml(initiatorName)} cancelled the trade.`,
+      });
+    }
+  }
+}
+// --- End Trade State Management ---
 
 /**
  * Initialize handlers with dependencies.
@@ -63,8 +129,12 @@ function getAvatarAndRoom(socketId) {
   let roomId = null;
   for (const [id, r] of rooms.entries()) {
     if (r && r.avatars && typeof r.avatars === "object") {
-      avatar = Object.values(r.avatars).find((a) => a && a.id === avatarId);
-      if (avatar) {
+      // Check if avatar exists in this room's avatars map
+      const potentialAvatar = Object.values(r.avatars).find(
+        (a) => a && a.id === avatarId
+      );
+      if (potentialAvatar) {
+        avatar = potentialAvatar;
         roomId = id;
         if (avatar.roomId !== roomId) {
           console.warn(
@@ -72,15 +142,20 @@ function getAvatarAndRoom(socketId) {
           );
           avatar.roomId = roomId;
         }
-        break;
+        break; // Found the avatar, stop searching rooms
       }
     }
   }
 
   if (!avatar) {
+    // Avatar ID exists in clients map but avatar not found in any room - possible inconsistency
+    console.warn(
+      `getAvatarAndRoom: Avatar ID ${avatarId} tracked for socket ${socketId}, but avatar instance not found in any room.`
+    );
     return { avatar: null, room: null, socket: clientInfo.socket };
   }
 
+  // Now we have the avatar, get its room directly
   const currentRoomId = avatar.roomId;
   if (!currentRoomId) {
     console.warn(
@@ -99,19 +174,17 @@ function getAvatarAndRoom(socketId) {
   return { avatar, room, socket: clientInfo.socket };
 }
 
-// --- NEW: Handler for Room List Request ---
+// --- Handler for Room List Request ---
 function handleRequestPublicRooms(socket) {
-  // No specific permissions needed to request the list
   const roomListData = [];
-  const sortedRoomIds = Array.from(rooms.keys()).sort(); // Sort alphabetically
+  const sortedRoomIds = Array.from(rooms.keys()).sort();
 
   sortedRoomIds.forEach((roomId) => {
     const room = rooms.get(roomId);
     if (room) {
-      // For now, list all rooms. Add filtering logic here later if needed (e.g., public/private flags)
       roomListData.push({
         id: roomId,
-        playerCount: room.getUserList().length, // Get current player count
+        playerCount: room.getUserList().length,
       });
     }
   });
@@ -121,9 +194,6 @@ function handleRequestPublicRooms(socket) {
   );
   socket.emit("public_rooms_update", roomListData);
 }
-// --- END NEW HANDLER ---
-
-// --- Event Handler Functions ---
 
 // --- Connection Handler (ASYNC due to DB read) ---
 async function handleConnection(socket) {
@@ -133,7 +203,7 @@ async function handleConnection(socket) {
     avatarId: null,
     userId: socket.userId,
   };
-  socket.isAdmin = false;
+  socket.isAdmin = false; // Default admin status
 
   let userData;
   try {
@@ -160,6 +230,7 @@ async function handleConnection(socket) {
   let spawnRoomId = userData.lastRoomId || SERVER_CONFIG.DEFAULT_ROOM_ID;
   let room = rooms.get(spawnRoomId);
 
+  // Ensure the target room exists, fallback to default if necessary
   if (!room) {
     console.warn(
       `User ${socket.userId}'s target room '${spawnRoomId}' not found! Spawning in default (${SERVER_CONFIG.DEFAULT_ROOM_ID}).`
@@ -167,6 +238,7 @@ async function handleConnection(socket) {
     spawnRoomId = SERVER_CONFIG.DEFAULT_ROOM_ID;
     room = rooms.get(spawnRoomId);
     if (!room) {
+      // If default room STILL doesn't exist
       console.error(
         `FATAL: Default room '${SERVER_CONFIG.DEFAULT_ROOM_ID}' not found! Cannot spawn player ${socket.userId}.`
       );
@@ -183,6 +255,7 @@ async function handleConnection(socket) {
   );
 
   if (!ServerAvatar || !ServerFurniture) {
+    // Check game object classes loaded
     console.error(
       "FATAL: Server game object classes not loaded. Cannot create avatar."
     );
@@ -192,44 +265,48 @@ async function handleConnection(socket) {
     return;
   }
 
+  // Create and configure the new avatar
   const newAvatar = new ServerAvatar(
     spawnPoint.x,
     spawnPoint.y,
     userData.username || `User_${socket.id.substring(0, 4)}`,
     socket.id
   );
-  newAvatar.isAdmin = socket.isAdmin;
+  newAvatar.isAdmin = socket.isAdmin; // Set admin status on avatar instance
   newAvatar.currency = userData.currency ?? SHARED_CONFIG.DEFAULT_CURRENCY;
   newAvatar.inventory = new Map(Object.entries(userData.inventory || {}));
   newAvatar.bodyColor = userData.bodyColor || "#6CA0DC";
   newAvatar.z = userData.lastZ ?? SHARED_CONFIG.AVATAR_DEFAULT_Z;
-  newAvatar.roomId = room.id;
+  newAvatar.roomId = room.id; // Set initial room ID
 
-  clients[socket.id].avatarId = newAvatar.id; // Store runtime ID
+  clients[socket.id].avatarId = newAvatar.id; // Store runtime ID in clients map
 
-  socket.emit("your_persistent_id", String(userData._id));
-
-  socket.join(room.id);
+  // Send initial state to the connecting client
+  socket.emit("your_persistent_id", String(userData._id)); // Send DB user ID
+  socket.join(room.id); // Join the Socket.IO room for broadcasts
   console.log(`Socket ${socket.id} joined Socket.IO room: ${room.id}`);
 
-  room.addAvatar(newAvatar);
+  room.addAvatar(newAvatar); // Add avatar to the room's internal state
   console.log(
     `Avatar ${newAvatar.name} (RuntimeID:${newAvatar.id}, UserID: ${socket.userId}) added to room ${room.id} state.`
   );
 
+  // Send initial game state relevant to the player
   socket.emit("room_state", room.getStateDTO());
-  socket.emit("your_avatar_id", String(newAvatar.id));
+  socket.emit("your_avatar_id", String(newAvatar.id)); // Send runtime avatar ID
   socket.emit("inventory_update", newAvatar.getInventoryDTO());
   socket.emit("currency_update", { currency: newAvatar.currency });
 
+  // Broadcast the new avatar's arrival to others in the room
   socket.to(room.id).emit("avatar_added", newAvatar.toDTO());
   console.log(
     ` -> Broadcast 'avatar_added' for ${newAvatar.name} to room ${room.id}.`
   );
 
+  // Send updated user list to everyone in the room
   io.to(room.id).emit("user_list_update", room.getUserList());
 
-  // Attach Event Listeners
+  // Attach Event Listeners for this socket
   socket.on("request_move", (data) => handleRequestMove(socket, data));
   socket.on("send_chat", (message) => handleSendChat(socket, message));
   socket.on("request_place_furni", (data) =>
@@ -258,9 +335,24 @@ async function handleConnection(socket) {
     handleRequestModifyLayout(socket, data)
   );
   socket.on("request_all_room_ids", () => handleRequestAllRoomIds(socket));
-  socket.on("request_public_rooms", () => handleRequestPublicRooms(socket)); // Added listener
+  socket.on("request_public_rooms", () => handleRequestPublicRooms(socket));
+  // Add Trade Listeners
+  socket.on("request_trade_initiate", (data) =>
+    handleRequestTradeInitiate(socket, data)
+  );
+  socket.on("trade_request_response", (data) =>
+    handleTradeRequestResponse(socket, data)
+  );
+  socket.on("trade_update_offer", (data) =>
+    handleTradeUpdateOffer(socket, data)
+  );
+  socket.on("trade_confirm_offer", (data) =>
+    handleTradeConfirmOffer(socket, data)
+  );
+  socket.on("trade_cancel", (data) => handleTradeCancel(socket, data));
+  // Lifecycle listeners
   socket.on("disconnect", (reason) => handleDisconnect(socket, reason));
-  socket.on("connect_error", (err) => handleConnectError(socket, err));
+  socket.on("connect_error", (err) => handleConnectError(socket, err)); // Less common but good practice
 }
 
 // --- Request Move Handler ---
@@ -272,9 +364,8 @@ function handleRequestMove(socket, target) {
     !target ||
     typeof target.x !== "number" ||
     typeof target.y !== "number"
-  ) {
+  )
     return;
-  }
   if (avatar.state === SHARED_CONFIG.AVATAR_STATE_SITTING) {
     socket.emit("action_failed", {
       action: "move",
@@ -284,7 +375,6 @@ function handleRequestMove(socket, target) {
   }
   const endX = Math.round(target.x);
   const endY = Math.round(target.y);
-
   if (!room.isWalkable(endX, endY)) {
     socket.emit("action_failed", {
       action: "move",
@@ -302,7 +392,6 @@ function handleRequestMove(socket, target) {
     }
     return;
   }
-
   if (avatar.moveTo(endX, endY, room, null, handleChangeRoom)) {
     // Pass room change handler
     io.to(room.id).emit("avatar_update", avatar.toDTO());
@@ -326,16 +415,12 @@ function handleRequestMove(socket, target) {
 // --- Send Chat Handler (with Sanitization) ---
 function handleSendChat(socket, message) {
   const { avatar, room } = getAvatarAndRoom(socket.id);
-  if (!avatar || !room || typeof message !== "string") {
-    console.warn(
-      `handleSendChat: Invalid conditions - Avatar: ${!!avatar}, Room: ${!!room}, Message Type: ${typeof message}`
-    );
-    return;
-  }
-  const trimmedMessage = message.trim().substring(0, 150);
-  const safeMessage = escapeHtml(trimmedMessage);
+  if (!avatar || !room || typeof message !== "string") return;
+  const trimmedMessage = message.trim().substring(0, 150); // Limit message length
+  const safeMessage = escapeHtml(trimmedMessage); // Sanitize
   if (!safeMessage) return;
 
+  // Command Handling
   if (safeMessage.startsWith("/")) {
     const commandParts = trimmedMessage.substring(1).split(" ");
     const command = commandParts[0].toLowerCase();
@@ -347,7 +432,7 @@ function handleSendChat(socket, message) {
     );
 
     let updateNeeded = false;
-    let broadcastUpdate = true;
+    let broadcastUpdate = true; // Whether to broadcast avatar_update after command
     let isAdminCommand = false;
     const adminCommands = [
       "kick",
@@ -362,7 +447,7 @@ function handleSendChat(socket, message) {
       if (!socket.isAdmin) {
         socket.emit("action_failed", {
           action: "command",
-          reason: "Admin permission required for this command.",
+          reason: "Admin permission required.",
         });
         return;
       }
@@ -379,7 +464,7 @@ function handleSendChat(socket, message) {
           else
             socket.emit("action_failed", {
               action: "emote",
-              reason: `Cannot ${command} right now`,
+              reason: `Cannot ${command} now.`,
             });
         } else {
           socket.emit("action_failed", {
@@ -396,7 +481,7 @@ function handleSendChat(socket, message) {
           else
             socket.emit("action_failed", {
               action: "emote",
-              reason: `Cannot perform emote '${escapeHtml(emoteId)}' right now`,
+              reason: `Cannot perform ${escapeHtml(emoteId)} now.`,
             });
         } else {
           const validEmotes = escapeHtml(
@@ -404,7 +489,7 @@ function handleSendChat(socket, message) {
           );
           socket.emit("action_failed", {
             action: "emote",
-            reason: `Usage: /emote <emote_id>. Valid: ${validEmotes}`,
+            reason: `Usage: /emote <id>. Valid: ${validEmotes}`,
           });
           broadcastUpdate = false;
         }
@@ -416,7 +501,7 @@ function handleSendChat(socket, message) {
           else
             socket.emit("action_failed", {
               action: "setcolor",
-              reason: "Invalid color format (#RRGGBB) or no change needed.",
+              reason: "Invalid color (#RRGGBB).",
             });
         } else {
           socket.emit("action_failed", {
@@ -433,12 +518,10 @@ function handleSendChat(socket, message) {
           if (typeof handleChangeRoom === "function")
             handleChangeRoom(socket, { targetRoomId });
           else {
-            console.error(
-              "handleChangeRoom function is not available in socket handlers!"
-            );
+            console.error("handleChangeRoom missing!");
             socket.emit("action_failed", {
               action: "command",
-              reason: "Room changing is currently unavailable.",
+              reason: "Room changing unavailable.",
             });
           }
           updateNeeded = false;
@@ -454,9 +537,8 @@ function handleSendChat(socket, message) {
       // Debugging
       case "myroom":
         socket.emit("chat_message", {
-          avatarId: null,
           avatarName: "Server",
-          text: `You are in room: ${escapeHtml(avatar.roomId || "Unknown")}`,
+          text: `You are in: ${escapeHtml(avatar.roomId || "?")}`,
           className: "info-msg",
         });
         updateNeeded = false;
@@ -468,7 +550,6 @@ function handleSendChat(socket, message) {
           const rawAdminMsg = rawArgs.join(" ");
           const safeAdminMsg = escapeHtml(rawAdminMsg.substring(0, 200));
           io.emit("chat_message", {
-            avatarId: null,
             avatarName: "Admin",
             text: `[${escapeHtml(avatar.name)}]: ${safeAdminMsg}`,
             className: "admin-msg",
@@ -479,7 +560,7 @@ function handleSendChat(socket, message) {
             action: "command",
             reason: "Usage: /admin <message>",
           });
-        return; // Exit after handling
+        return; // Exit after handling admin command
       case "announce":
         if (rawArgs.length > 0) {
           const rawAnnounceMsg = rawArgs.join(" ");
@@ -488,7 +569,6 @@ function handleSendChat(socket, message) {
             `ADMIN ACTION: ${avatar.name} announced: ${rawAnnounceMsg}`
           );
           io.emit("chat_message", {
-            avatarId: null,
             avatarName: "Announcement",
             text: safeAnnounceMsg,
             className: "announcement-msg",
@@ -506,7 +586,7 @@ function handleSendChat(socket, message) {
             findAvatarGlobally(targetNameKick);
           if (targetAvatarKick && clients[targetAvatarKick.socketId]) {
             console.log(
-              `ADMIN ACTION: ${avatar.name} kicking user ${targetAvatarKick.name}...`
+              `ADMIN ACTION: ${avatar.name} kicking ${targetAvatarKick.name}...`
             );
             clients[targetAvatarKick.socketId].socket.emit(
               "force_disconnect",
@@ -517,13 +597,13 @@ function handleSendChat(socket, message) {
               avatarName: "Server",
               text: `${escapeHtml(
                 targetAvatarKick.name
-              )} was kicked by ${escapeHtml(avatar.name)}.`,
+              )} kicked by ${escapeHtml(avatar.name)}.`,
               className: "server-msg",
             });
           } else
             socket.emit("action_failed", {
               action: "kick",
-              reason: `User '${escapeHtml(targetNameKick)}' not found online.`,
+              reason: `User '${escapeHtml(targetNameKick)}' not found.`,
             });
         } else
           socket.emit("action_failed", {
@@ -554,9 +634,7 @@ function handleSendChat(socket, message) {
           else if (!destRoomTp)
             socket.emit("action_failed", {
               action: "teleport",
-              reason: `Destination room '${escapeHtml(
-                destRoomIdTp
-              )}' not found.`,
+              reason: `Room '${escapeHtml(destRoomIdTp)}' not found.`,
             });
           else if (isNaN(targetXTp) || isNaN(targetYTp))
             socket.emit("action_failed", {
@@ -566,9 +644,7 @@ function handleSendChat(socket, message) {
           else if (!destRoomTp.isValidTile(targetXTp, targetYTp))
             socket.emit("action_failed", {
               action: "teleport",
-              reason: `Cannot teleport: Target tile (${targetXTp}, ${targetYTp}) in room ${escapeHtml(
-                destRoomIdTp
-              )} is invalid terrain.`,
+              reason: `Cannot teleport: Target tile invalid.`,
             });
           else {
             console.log(
@@ -583,17 +659,13 @@ function handleSendChat(socket, message) {
               });
               socket.emit("chat_message", {
                 avatarName: "Server",
-                text: `Teleported ${escapeHtml(
-                  targetAvatarTp.name
-                )} to ${escapeHtml(destRoomIdTp)}(${targetXTp}, ${targetYTp}).`,
+                text: `Teleported ${escapeHtml(targetAvatarTp.name)}.`,
                 className: "info-msg",
               });
             } else
               socket.emit("action_failed", {
                 action: "teleport",
-                reason: `Cannot teleport: Socket for ${escapeHtml(
-                  targetNameTp
-                )} not found or internal error.`,
+                reason: `Cannot teleport: Socket not found or internal error.`,
               });
           }
         } else
@@ -634,9 +706,7 @@ function handleSendChat(socket, message) {
               );
               socket.emit("chat_message", {
                 avatarName: "Server",
-                text: `Gave ${quantityGive}x ${escapeHtml(
-                  definition.name
-                )} to ${escapeHtml(targetAvatarGive.name)}.`,
+                text: `Gave item to ${escapeHtml(targetAvatarGive.name)}.`,
                 className: "info-msg",
               });
               const targetSock = clients[targetAvatarGive.socketId]?.socket;
@@ -647,22 +717,22 @@ function handleSendChat(socket, message) {
                 );
                 targetSock.emit("chat_message", {
                   avatarName: "Server",
-                  text: `Admin ${escapeHtml(
-                    avatar.name
-                  )} gave you ${quantityGive}x ${escapeHtml(definition.name)}!`,
+                  text: `Admin gave you ${quantityGive}x ${escapeHtml(
+                    definition.name
+                  )}!`,
                   className: "server-msg",
                 });
               }
             } else
               socket.emit("action_failed", {
                 action: "give",
-                reason: `Failed to give item (internal error?).`,
+                reason: `Failed to give (internal?).`,
               });
           }
         } else
           socket.emit("action_failed", {
             action: "give",
-            reason: "Usage: /give <user> <item_id> [quantity]",
+            reason: "Usage: /give <user> <item_id> [qty]",
           });
         break;
       case "givegold":
@@ -699,16 +769,14 @@ function handleSendChat(socket, message) {
               });
               targetSock.emit("chat_message", {
                 avatarName: "Server",
-                text: `Admin ${escapeHtml(
-                  avatar.name
-                )} gave you ${amountGold} Gold!`,
+                text: `Admin gave you ${amountGold} Gold!`,
                 className: "server-msg",
               });
             }
           } else
             socket.emit("action_failed", {
               action: "givegold",
-              reason: `Failed to give gold (internal error?).`,
+              reason: `Failed to give (internal?).`,
             });
         } else
           socket.emit("action_failed", {
@@ -726,6 +794,7 @@ function handleSendChat(socket, message) {
         updateNeeded = false;
         broadcastUpdate = false;
     }
+    // Broadcast avatar update if needed (e.g., after emote or color change)
     if (updateNeeded && broadcastUpdate) {
       io.to(room.id).emit("avatar_update", avatar.toDTO());
     }
@@ -736,8 +805,8 @@ function handleSendChat(socket, message) {
       avatarId: String(avatar.id),
       avatarName: escapeHtml(avatar.name),
       text: safeMessage,
-      isAdmin: avatar.isAdmin,
-      className: avatar.isAdmin ? "admin-msg" : "",
+      isAdmin: avatar.isAdmin, // Include admin status
+      className: avatar.isAdmin ? "admin-msg" : "", // Add class if admin
     });
   }
 } // --- End handleSendChat ---
@@ -745,7 +814,6 @@ function handleSendChat(socket, message) {
 // --- Place Furniture Handler (ASYNC with Rollback Logic) ---
 async function handleRequestPlaceFurni(socket, data) {
   const { avatar, room } = getAvatarAndRoom(socket.id);
-  // Basic validation
   if (
     !avatar ||
     !room ||
@@ -788,16 +856,12 @@ async function handleRequestPlaceFurni(socket, data) {
     y: gridY,
     width: definition.width || 1,
     height: definition.height || 1,
-    // Mimic getOccupiedTiles by adding the definition context it needs internally
     definition: definition,
   };
-
-  // Call getOccupiedTiles with the correct context
   const occupiedTiles =
     ServerFurniture.prototype.getOccupiedTiles.call(tempFurniProto);
-
   const placeZ =
-    room.getStackHeightAt(gridX, gridY) + (definition.zOffset || 0); // Calculate Z needed for validation AND saving
+    room.getStackHeightAt(gridX, gridY) + (definition.zOffset || 0);
 
   for (const tile of occupiedTiles) {
     if (!room.isValidTile(tile.x, tile.y)) {
@@ -808,7 +872,6 @@ async function handleRequestPlaceFurni(socket, data) {
       return;
     }
     if (!definition.isFlat) {
-      // Check stackability/solids only if placing a non-flat item
       const baseStackTile = room.getFurnitureStackAt(tile.x, tile.y);
       const topItemOnThisTile = baseStackTile.sort((a, b) => b.z - a.z)[0];
       if (topItemOnThisTile && !topItemOnThisTile.stackable) {
@@ -819,7 +882,6 @@ async function handleRequestPlaceFurni(socket, data) {
         return;
       }
       if (room.isTileOccupiedBySolid(tile.x, tile.y)) {
-        // Check for solid blockers
         const solidBlocker = baseStackTile.find(
           (f) => !f.isWalkable && !f.isFlat && !f.stackable
         );
@@ -833,7 +895,6 @@ async function handleRequestPlaceFurni(socket, data) {
       }
     }
   }
-  // Check base tile stackability if not flat
   if (!definition.isFlat) {
     const baseStack = room.getFurnitureStackAt(gridX, gridY);
     const topItemOnBase = baseStack.sort((a, b) => b.z - a.z)[0];
@@ -845,15 +906,11 @@ async function handleRequestPlaceFurni(socket, data) {
       return;
     }
   }
-  // Check height limit
-  // Calculate the top surface Z of the new item
   const itemStackHeight =
     definition.stackHeight ?? (definition.isFlat ? 0 : 1.0);
   const itemStackContrib =
     itemStackHeight * (SHARED_CONFIG.DEFAULT_STACK_HEIGHT ?? 0.5);
   const itemTopZ = placeZ + (definition.isFlat ? 0 : itemStackContrib);
-
-  // Compare the *top* of the item against the max stack height
   const epsilon = 0.001;
   if (itemTopZ >= SHARED_CONFIG.MAX_STACK_Z - epsilon) {
     socket.emit("action_failed", {
@@ -864,7 +921,6 @@ async function handleRequestPlaceFurni(socket, data) {
   }
   // --- End Validation ---
 
-  // --- Place Item Transaction (Reordered) ---
   let savedDocument;
   try {
     // 1. Create in Database First
@@ -881,17 +937,17 @@ async function handleRequestPlaceFurni(socket, data) {
     };
     savedDocument = await Furniture.create(newFurniData);
     if (!savedDocument || !savedDocument._id)
-      throw new Error("DB create failed or returned invalid doc.");
+      throw new Error("DB create failed.");
     console.log(
       `[DB Create OK] Room ${room.id}: ${definition.name} (ID: ${savedDocument._id})`
     );
 
-    // 2. DB Create SUCCEEDED - Now remove from inventory
+    // 2. Remove from inventory
     if (avatar.removeItem(data.definitionId, 1)) {
       console.log(
         `[Inv Remove OK] User ${avatar.name}: Removed 1x ${data.definitionId}`
       );
-      // 3. Inventory Remove SUCCEEDED - Add to Memory & Broadcast
+      // 3. Add to Memory & Broadcast
       try {
         const newFurniInstance = new ServerFurniture(
           definition.id,
@@ -915,31 +971,31 @@ async function handleRequestPlaceFurni(socket, data) {
         );
       } catch (memError) {
         console.error(
-          `CRITICAL ERROR: Failed to create ServerFurniture instance ${savedDocument._id} AFTER DB create & inventory removal!`,
+          `CRITICAL ERROR: Failed create ServerFurniture ${savedDocument._id} AFTER DB create & inv removal!`,
           memError
         );
         socket.emit("action_failed", {
           action: "place",
-          reason: "Critical server error after placement.",
+          reason: "Critical server error.",
         });
       }
     } else {
-      // Inventory Remove FAILED (after DB create succeeded) - CRITICAL!
+      // Inventory Remove FAILED
       console.error(
-        `CRITICAL ERROR: Failed to remove item ${data.definitionId} from ${avatar.name}'s inventory AFTER creating DB document ${savedDocument._id}! Attempting DB compensation.`
+        `CRITICAL ERROR: Failed remove item ${data.definitionId} AFTER creating DB doc ${savedDocument._id}! Attempting DB compensation.`
       );
       try {
         await Furniture.findByIdAndDelete(savedDocument._id);
-        console.log(`[COMPENSATION] Deleted DB document ${savedDocument._id}.`);
+        console.log(`[COMPENSATION] Deleted DB doc ${savedDocument._id}.`);
       } catch (deleteError) {
         console.error(
-          `[COMPENSATION FAILED] Could not delete DB document ${savedDocument._id}! Manual cleanup needed.`,
+          `[COMPENSATION FAILED] Could not delete DB doc ${savedDocument._id}! Manual cleanup needed.`,
           deleteError
         );
       }
       socket.emit("action_failed", {
         action: "place",
-        reason: "Inventory error occurred after saving (Rolled back).",
+        reason: "Inventory error (Rolled back).",
       });
       socket.emit("inventory_update", avatar.getInventoryDTO()); // Resync client
     }
@@ -969,9 +1025,7 @@ async function handleRequestRotateFurni(socket, data) {
     });
     return;
   }
-
-  const clientInfo = clients[socket.id]; // Ownership check
-  // Allow Admins to rotate any furniture
+  const clientInfo = clients[socket.id];
   if (
     !socket.isAdmin &&
     furni.ownerId !== null &&
@@ -983,22 +1037,20 @@ async function handleRequestRotateFurni(socket, data) {
     });
     return;
   }
-
   const oldRotation = furni.rotation;
   const newRotation = rotateDirection(furni.rotation, 2);
   if (oldRotation === newRotation) return;
-
   try {
-    // 1. Update Database First
+    // 1. Update DB
     const updatedDoc = await Furniture.findByIdAndUpdate(
       furniId,
       { $set: { rotation: newRotation } },
       { new: false }
     );
-    if (!updatedDoc) throw new Error("Doc not found in DB during update.");
-    // 2. Update In-Memory Instance
+    if (!updatedDoc) throw new Error("Doc not found during update.");
+    // 2. Update Memory
     furni.rotation = newRotation;
-    // 3. Broadcast and Update Seated Avatars
+    // 3. Broadcast & Update Seated
     console.log(
       `[${room.id}] ${avatar.name} rotated ${furni.name} (ID:${furni.id}) to ${furni.rotation}`
     );
@@ -1039,11 +1091,10 @@ async function handleRequestPickupFurni(socket, data) {
     });
     return;
   }
-
-  // Validation: Ownership (Allow Admins)
+  // Validation
   const clientInfo = clients[socket.id];
   if (
-    !socket.isAdmin && // Admin check
+    !socket.isAdmin &&
     furniInstance.ownerId !== null &&
     String(furniInstance.ownerId) !== clientInfo?.userId
   ) {
@@ -1053,7 +1104,6 @@ async function handleRequestPickupFurni(socket, data) {
     });
     return;
   }
-  // Validation: Items on top
   const furniTiles = furniInstance.getOccupiedTiles();
   const itemsOnTop = room.furniture.filter((f) => {
     if (String(f.id) === furniId || f.isFlat || f.z <= furniInstance.z)
@@ -1071,7 +1121,6 @@ async function handleRequestPickupFurni(socket, data) {
     });
     return;
   }
-  // Validation: Seated users
   if (room.isFurnitureOccupied(furniId)) {
     socket.emit("action_failed", {
       action: "pickup",
@@ -1081,17 +1130,17 @@ async function handleRequestPickupFurni(socket, data) {
   }
   // --- End Validation ---
 
-  const furniDataForRecreation = furniInstance.toDBSaveObject(); // Snapshot before delete
+  const furniDataForRecreation = furniInstance.toDBSaveObject();
   const definitionIdToRefund = furniInstance.definitionId;
 
   try {
     // --- Pickup Transaction ---
-    // 1. Delete from Database First
+    // 1. Delete DB
     const deleteResult = await Furniture.findByIdAndDelete(furniId);
     if (!deleteResult) {
-      // Item wasn't in DB
+      // Item not in DB
       console.warn(
-        `[DB Delete NF] Pickup requested for ${furniId}, but not found in DB.`
+        `[DB Delete NF] Pickup requested for ${furniId}, but not found.`
       );
       if (room.getFurnitureById(furniId)) {
         room.removeFurnitureInstance(furniId);
@@ -1105,8 +1154,7 @@ async function handleRequestPickupFurni(socket, data) {
       return;
     }
     console.log(`[DB Delete OK] Room ${room.id}: Deleted furniture ${furniId}`);
-
-    // 2. Remove from Memory
+    // 2. Remove Memory
     const removedInstance = room.removeFurnitureInstance(furniId);
     if (!removedInstance)
       console.error(
@@ -1116,52 +1164,47 @@ async function handleRequestPickupFurni(socket, data) {
       console.log(
         `[Mem Remove OK] Room ${room.id}: Removed ${furniId} from memory.`
       );
-
     // 3. Add to Inventory
     if (avatar.addItem(definitionIdToRefund, 1)) {
       console.log(
         `[Inv Add OK] User ${avatar.name}: Added 1x ${definitionIdToRefund}`
       );
-      // 4. Broadcast and Notify Client
+      // 4. Broadcast & Notify Client
       io.to(room.id).emit("furni_removed", { id: furniId });
       socket.emit("inventory_update", avatar.getInventoryDTO());
       console.log(`[Pickup Success] Broadcasted furni_removed for ${furniId}`);
     } else {
-      // Inventory Add FAILED - CRITICAL!
+      // Inventory Add FAILED
       console.error(
-        `CRITICAL ERROR: Failed to add item ${definitionIdToRefund} (DB ID: ${furniId}) to ${avatar.name} inventory AFTER DB delete! Attempting DB compensation.`
+        `CRITICAL ERROR: Failed add item ${definitionIdToRefund} (DB ID: ${furniId}) AFTER DB delete! Attempting DB compensation.`
       );
       try {
-        // Add ownerId to the data before recreating
-        furniDataForRecreation.ownerId = clientInfo?.userId || null;
+        furniDataForRecreation.ownerId = clientInfo?.userId || null; // Add ownerId back
         await Furniture.create(furniDataForRecreation);
         console.log(`[COMPENSATION] Re-created DB document for ${furniId}.`);
-        // TODO: Need to put the item back into the room's memory as well!
         const recreatedInstance = new ServerFurniture(
           furniDataForRecreation.definitionId,
           furniDataForRecreation.x,
           furniDataForRecreation.y,
           furniDataForRecreation.z,
           furniDataForRecreation.rotation,
-          furniId, // Use original ID
+          furniId,
           furniDataForRecreation.ownerId,
           furniDataForRecreation.state,
           furniDataForRecreation.colorOverride
         );
         room.addFurniture(recreatedInstance);
-        io.to(room.id).emit("furni_added", recreatedInstance.toDTO()); // Notify clients it's back
-        console.log(
-          `[COMPENSATION] Re-added instance ${furniId} to room memory and broadcasted.`
-        );
+        io.to(room.id).emit("furni_added", recreatedInstance.toDTO());
+        console.log(`[COMPENSATION] Re-added instance ${furniId} to memory.`);
       } catch (recreateError) {
         console.error(
-          `[COMPENSATION FAILED] Could not re-create DB document or memory instance for ${furniId}! Manual cleanup required.`,
+          `[COMPENSATION FAILED] Could not re-create DB/memory for ${furniId}! Manual cleanup needed.`,
           recreateError
         );
       }
       socket.emit("action_failed", {
         action: "pickup",
-        reason: "Inventory error after pickup (Attempted rollback).",
+        reason: "Inventory error (Rolled back).",
       });
     }
   } catch (dbError) {
@@ -1182,7 +1225,6 @@ function handleRequestSit(socket, data) {
     socket.emit("action_failed", { action: "sit", reason: "Already sitting." });
     return;
   }
-
   const furniId = String(data.furniId);
   const furni = room.getFurnitureById(furniId);
   if (!furni || !furni.canSit) {
@@ -1193,7 +1235,6 @@ function handleRequestSit(socket, data) {
     socket.emit("action_failed", { action: "sit", reason: "Seat occupied." });
     return;
   }
-
   const interactionSpot = furni.getInteractionTile();
   if (!room.isWalkable(interactionSpot.x, interactionSpot.y)) {
     socket.emit("action_failed", {
@@ -1202,22 +1243,15 @@ function handleRequestSit(socket, data) {
     });
     return;
   }
-
   const currentX = Math.round(avatar.x);
   const currentY = Math.round(avatar.y);
-  const sitAction = { type: "sit", targetId: furniId }; // Action stores DB ID
-
+  const sitAction = { type: "sit", targetId: furniId };
   if (currentX === interactionSpot.x && currentY === interactionSpot.y) {
-    // Already at spot
     if (avatar.executeSit(furni, room))
       io.to(room.id).emit("avatar_update", avatar.toDTO());
     else
-      socket.emit("action_failed", {
-        action: "sit",
-        reason: "Failed to sit (internal error).",
-      });
+      socket.emit("action_failed", { action: "sit", reason: "Failed to sit." });
   } else {
-    // Need to walk
     if (
       avatar.moveTo(
         interactionSpot.x,
@@ -1264,9 +1298,8 @@ function handleRequestUserList(socket) {
 function handleRequestProfile(socket, data) {
   const requesterInfo = getAvatarAndRoom(socket.id);
   if (!requesterInfo.avatar || !data || data.avatarId == null) return;
-
   let targetAvatar = null;
-  const targetAvatarId = String(data.avatarId); // Runtime ID
+  const targetAvatarId = String(data.avatarId);
   for (const r of rooms.values()) {
     if (r && r.avatars) {
       targetAvatar = Object.values(r.avatars).find(
@@ -1275,7 +1308,6 @@ function handleRequestProfile(socket, data) {
       if (targetAvatar) break;
     }
   }
-
   if (targetAvatar) {
     console.log(
       `${requesterInfo.avatar.name} requested profile for ${targetAvatar.name}`
@@ -1302,14 +1334,9 @@ async function handleRequestUseFurni(socket, data) {
     socket.emit("action_failed", { action: "use", reason: "Cannot use this." });
     return;
   }
-
-  // Optional distance check here if needed
-
-  const useResult = furni.use(avatar, room); // Update memory, get changes
-
+  const useResult = furni.use(avatar, room);
   if (useResult.changed && useResult.updatePayload) {
     try {
-      // Update Database
       const updatedDoc = await Furniture.findByIdAndUpdate(
         furniId,
         { $set: useResult.updatePayload },
@@ -1321,7 +1348,6 @@ async function handleRequestUseFurni(socket, data) {
           furni.id
         }). New State: ${furni.state}, Z: ${furni.z.toFixed(2)}`
       );
-      // Broadcast update payload
       io.to(room.id).emit("furni_updated", {
         id: furni.id,
         ...useResult.updatePayload,
@@ -1332,10 +1358,7 @@ async function handleRequestUseFurni(socket, data) {
         action: "use",
         reason: "Server error using.",
       });
-      // Potential rollback needed? Log for now.
     }
-  } else {
-    /* No state change, no DB update or broadcast needed */
   }
 }
 
@@ -1364,7 +1387,6 @@ async function handleRequestRecolorFurni(socket, data) {
     });
     return;
   }
-  // Ownership check (Allow Admins)
   const clientInfo = clients[socket.id];
   if (
     !socket.isAdmin &&
@@ -1381,9 +1403,7 @@ async function handleRequestRecolorFurni(socket, data) {
     });
     return;
   }
-  // Color validation
   const targetColor = data.colorHex;
-  // Allow null/empty string for resetting
   if (
     targetColor !== null &&
     targetColor !== "" &&
@@ -1396,14 +1416,9 @@ async function handleRequestRecolorFurni(socket, data) {
     });
     return;
   }
-
-  // TODO: Add cost check/consumption if using dye items
-
-  const recolorResult = furni.setColorOverride(targetColor); // Update memory
-
+  const recolorResult = furni.setColorOverride(targetColor);
   if (recolorResult.changed && recolorResult.updatePayload) {
     try {
-      // Update Database
       const updatedDoc = await Furniture.findByIdAndUpdate(
         furniId,
         { $set: recolorResult.updatePayload },
@@ -1415,12 +1430,10 @@ async function handleRequestRecolorFurni(socket, data) {
       console.log(
         `[${room.id}] ${avatar.name} recolored ${furni.name} (ID:${furni.id}) to ${displayColor}`
       );
-      // Broadcast update payload
       io.to(room.id).emit("furni_updated", {
         id: furni.id,
         ...recolorResult.updatePayload,
       });
-      // If dyes were used: socket.emit('inventory_update', avatar.getInventoryDTO());
     } catch (dbError) {
       console.error(`DB Error recoloring furniture ${furniId}:`, dbError);
       socket.emit("action_failed", {
@@ -1428,12 +1441,11 @@ async function handleRequestRecolorFurni(socket, data) {
         reason: "Server error recoloring.",
       });
     }
-  } else {
+  } else
     socket.emit("action_failed", {
       action: "recolor",
       reason: "No color change needed.",
     });
-  }
 }
 
 // --- Buy Item Handler ---
@@ -1458,7 +1470,7 @@ function handleRequestBuyItem(socket, data) {
     (def) => def.id === itemId
   );
   if (!definition) {
-    console.error(`Shop Error: Item ${itemId} in catalog but not in defs!`);
+    console.error(`Shop Error: Item ${itemId} in catalog but not defs!`);
     socket.emit("action_failed", {
       action: "buy",
       reason: "Shop config error.",
@@ -1473,26 +1485,22 @@ function handleRequestBuyItem(socket, data) {
     });
     return;
   }
-
   if (avatar.removeCurrency(price)) {
-    // Transaction (memory)
     if (avatar.addItem(itemId, 1)) {
-      // Success
       console.log(
         `${avatar.name} bought ${definition.name} for ${price} gold.`
       );
       socket.emit("currency_update", { currency: avatar.currency });
       socket.emit("inventory_update", avatar.getInventoryDTO());
       socket.emit("chat_message", {
-        avatarId: null,
         avatarName: "Server",
         text: `You bought 1x ${escapeHtml(definition.name)}!`,
         className: "info-msg",
       });
     } else {
-      // Failed inventory add, refund currency
+      // Failed inv add, refund
       console.error(
-        `Buy Error: Failed add item ${itemId} to ${avatar.name} after taking currency. Refunding.`
+        `Buy Error: Failed add item ${itemId} after taking currency. Refunding.`
       );
       avatar.addCurrency(price);
       socket.emit("action_failed", {
@@ -1503,19 +1511,26 @@ function handleRequestBuyItem(socket, data) {
     }
   } else {
     // Failed currency removal
-    console.error(
-      `Buy Error: Failed remove currency ${price} from ${avatar.name}.`
-    );
+    console.error(`Buy Error: Failed remove currency ${price}.`);
     socket.emit("action_failed", {
       action: "buy",
       reason: "Currency transaction error.",
     });
   }
-  // Player state saved on disconnect/shutdown
 }
 
 // --- Room Change Handler ---
 function handleChangeRoom(socket, data) {
+  // --- Add Trade Cancellation on Room Change ---
+  const ongoingTrade = findTradeBySocketId(socket.id);
+  if (ongoingTrade) {
+    console.log(
+      `Player ${socket.id} changed room during trade ${ongoingTrade.tradeId}. Cancelling trade.`
+    );
+    endTradeSession(ongoingTrade.tradeId, "Player left the room.");
+  }
+  // --- End Trade Cancellation ---
+
   const { avatar: currentAvatar, room: currentRoom } = getAvatarAndRoom(
     socket.id
   );
@@ -1526,7 +1541,6 @@ function handleChangeRoom(socket, data) {
     });
     return;
   }
-
   const targetRoomId = data.targetRoomId;
   const targetRoom = rooms.get(targetRoomId);
   if (!targetRoom) {
@@ -1536,9 +1550,8 @@ function handleChangeRoom(socket, data) {
     });
     return;
   }
-
   if (currentRoom.id === targetRoomId) {
-    // Handle teleport within same room
+    // Teleport within same room
     console.log(
       `handleChangeRoom: Teleporting ${currentAvatar.name} within room ${targetRoomId}.`
     );
@@ -1549,8 +1562,8 @@ function handleChangeRoom(socket, data) {
       targetRoomId,
       spawnPoint.x,
       spawnPoint.y
-    ); // Reset state but keep roomId
-    io.to(targetRoomId).emit("avatar_update", currentAvatar.toDTO()); // Update everyone
+    );
+    io.to(targetRoomId).emit("avatar_update", currentAvatar.toDTO());
     console.log(
       ` -> ${
         currentAvatar.name
@@ -1560,11 +1573,9 @@ function handleChangeRoom(socket, data) {
     );
     return;
   }
-
   console.log(
     `${currentAvatar.name} changing from room ${currentRoom.id} to ${targetRoomId}`
   );
-  // 1. Remove from current room & notify
   const removed = currentRoom.removeAvatar(socket.id);
   if (removed) {
     io.to(currentRoom.id).emit("avatar_removed", {
@@ -1577,34 +1588,23 @@ function handleChangeRoom(socket, data) {
     );
   socket.leave(currentRoom.id);
   console.log(` -> Left Socket.IO room: ${currentRoom.id}`);
-
-  // 2. Find spawn point in target room
   const targetX = data.targetX ?? -1;
   const targetY = data.targetY ?? -1;
   const spawnPoint = targetRoom.findSpawnPoint(targetX, targetY);
-
-  // 3. Prepare avatar state for new room
   currentAvatar.prepareForRoomChange(targetRoomId, spawnPoint.x, spawnPoint.y);
-
-  // 4. Add to new room & join Socket.IO room
   targetRoom.addAvatar(currentAvatar);
   socket.join(targetRoomId);
   console.log(` -> Joined Socket.IO room: ${targetRoomId}`);
-
-  // 5. Send new state to client
   socket.emit("room_state", targetRoom.getStateDTO());
   socket.emit("your_avatar_id", String(currentAvatar.id));
   socket.emit("inventory_update", currentAvatar.getInventoryDTO());
   socket.emit("currency_update", { currency: currentAvatar.currency });
-
-  // 6. Broadcast arrival & user list
   socket.to(targetRoomId).emit("avatar_added", currentAvatar.toDTO());
   io.to(targetRoomId).emit("user_list_update", targetRoom.getUserList());
-
   console.log(
     ` -> ${
       currentAvatar.name
-    } successfully changed to room ${targetRoomId} at (${currentAvatar.x.toFixed(
+    } changed to room ${targetRoomId} at (${currentAvatar.x.toFixed(
       1
     )}, ${currentAvatar.y.toFixed(1)})`
   );
@@ -1612,7 +1612,7 @@ function handleChangeRoom(socket, data) {
 
 // --- Admin: Create Room Handler (ASYNC) ---
 async function handleRequestCreateRoom(socket, data) {
-  const { avatar } = getAvatarAndRoom(socket.id); // Get avatar for permission check
+  const { avatar } = getAvatarAndRoom(socket.id);
   if (!avatar || !socket.isAdmin) {
     socket.emit("action_failed", {
       action: "create_room",
@@ -1623,17 +1623,15 @@ async function handleRequestCreateRoom(socket, data) {
   if (!data || typeof data.roomId !== "string" || !data.roomId.trim()) {
     socket.emit("action_failed", {
       action: "create_room",
-      reason: "Invalid room ID provided.",
+      reason: "Invalid room ID.",
     });
     return;
   }
-
-  const newRoomId = data.roomId.trim().toLowerCase().replace(/\s+/g, "_"); // Sanitize ID
+  const newRoomId = data.roomId.trim().toLowerCase().replace(/\s+/g, "_");
   const requestedCols =
     parseInt(data.cols, 10) || SERVER_CONFIG.DEFAULT_ROOM_COLS;
   const requestedRows =
     parseInt(data.rows, 10) || SERVER_CONFIG.DEFAULT_ROOM_ROWS;
-  // Basic dimension validation
   if (
     requestedCols < 5 ||
     requestedCols > 50 ||
@@ -1642,16 +1640,13 @@ async function handleRequestCreateRoom(socket, data) {
   ) {
     socket.emit("action_failed", {
       action: "create_room",
-      reason: "Dimensions must be between 5 and 50.",
+      reason: "Dimensions must be 5-50.",
     });
     return;
   }
-
   console.log(
     `Admin ${avatar.name} requested creation of room: ${newRoomId} (${requestedCols}x${requestedRows})`
   );
-
-  // Check if room already exists (memory and DB)
   if (rooms.has(newRoomId)) {
     socket.emit("action_failed", {
       action: "create_room",
@@ -1664,53 +1659,37 @@ async function handleRequestCreateRoom(socket, data) {
     if (existingRoom) {
       socket.emit("action_failed", {
         action: "create_room",
-        reason: `Room '${newRoomId}' already exists in database.`,
+        reason: `Room '${newRoomId}' already exists in DB.`,
       });
       return;
     }
-
-    // Create default empty layout (walls around, floor inside)
     const newLayout = Array.from({ length: requestedRows }, (_, y) =>
-      Array.from(
-        { length: requestedCols },
-        (_, x) =>
-          y === 0 ||
-          y === requestedRows - 1 ||
-          x === 0 ||
-          x === requestedCols - 1
-            ? 1
-            : 0 // Wall=1, Floor=0
+      Array.from({ length: requestedCols }, (_, x) =>
+        y === 0 || y === requestedRows - 1 || x === 0 || x === requestedCols - 1
+          ? 1
+          : 0
       )
     );
-
-    // Save to Database
     const newRoomState = new RoomState({
       roomId: newRoomId,
       layout: newLayout,
     });
     await newRoomState.save();
     console.log(` -> Saved new room state for '${newRoomId}' to DB.`);
-
-    // Create and add ServerRoom instance to memory
-    const newRoomInstance = new ServerRoom(newRoomId); // Constructor loads default/fallback
-    newRoomInstance.layout = newLayout; // Override with the generated layout
+    const newRoomInstance = new ServerRoom(newRoomId);
+    newRoomInstance.layout = newLayout;
     newRoomInstance.cols = requestedCols;
     newRoomInstance.rows = requestedRows;
     newRoomInstance.pathfinder = new (require("./lib/pathfinder"))(
       newRoomInstance
-    ); // Re-init pathfinder
+    );
     rooms.set(newRoomId, newRoomInstance);
-    console.log(` -> Added new room '${newRoomId}' to server memory.`);
-
-    // Send success feedback
+    console.log(` -> Added new room '${newRoomId}' to memory.`);
     socket.emit("chat_message", {
       avatarName: "Server",
-      text: `Room '${newRoomId}' created successfully!`,
+      text: `Room '${newRoomId}' created!`,
       className: "info-msg",
     });
-
-    // Optional: Announce globally?
-    // io.emit('chat_message', { avatarName: 'Server', text: `Admin ${avatar.name} created a new room: ${newRoomId}!`, className: 'server-msg' });
   } catch (error) {
     console.error(`Error creating room '${newRoomId}':`, error);
     socket.emit("action_failed", {
@@ -1737,11 +1716,8 @@ async function handleRequestModifyLayout(socket, data) {
     });
     return;
   }
-
   const { x, y, type } = data;
-  const validTypes = [0, 1, 2, "X"]; // Floor, Wall, AltFloor, Hole
-
-  // Validate coordinates and type
+  const validTypes = [0, 1, 2, "X"];
   if (x < 0 || x >= room.cols || y < 0 || y >= room.rows) {
     socket.emit("action_failed", {
       action: "modify_layout",
@@ -1756,130 +1732,550 @@ async function handleRequestModifyLayout(socket, data) {
     });
     return;
   }
-
-  // Prevent modifying tile if an avatar is standing exactly on it? (Optional, can be complex)
   const avatarOnTile = Object.values(room.avatars).find(
     (a) => Math.round(a.x) === x && Math.round(a.y) === y
   );
   if (avatarOnTile && type !== 0 && type !== 2) {
-    // If trying to change to non-walkable type under avatar
     socket.emit("action_failed", {
       action: "modify_layout",
-      reason: `Cannot modify tile under ${avatarOnTile.name}.`,
+      reason: `Cannot modify under ${avatarOnTile.name}.`,
     });
     return;
   }
-  // Prevent modifying tile if non-flat furniture is based there? (More complex check)
   const furnitureOnTile = room.getFurnitureStackAt(x, y).find((f) => !f.isFlat);
   if (furnitureOnTile && type !== 0 && type !== 2) {
     socket.emit("action_failed", {
       action: "modify_layout",
-      reason: `Cannot modify tile under '${furnitureOnTile.name}'.`,
+      reason: `Cannot modify under '${furnitureOnTile.name}'.`,
     });
     return;
   }
 
-  // --- Update Layout ---
-  let oldType; // Declare here to be accessible in catch block
+  let oldType;
   try {
-    // 1. Update In-Memory Layout
     oldType = room.layout[y][x];
-    if (oldType === type) return; // No change needed
-
+    if (oldType === type) return;
     room.layout[y][x] = type;
     console.log(
       `Admin ${avatar.name} modified layout in ${room.id} at (${x},${y}) from ${oldType} to ${type}.`
     );
-    // NOTE: Pathfinder should automatically use the updated layout via its room reference.
-
-    // 2. Update Database (Save the entire layout)
-    // Use findOneAndUpdate which is slightly more robust than save() if doc might not exist
     const updatedRoomState = await RoomState.findOneAndUpdate(
       { roomId: room.id },
       { $set: { layout: room.layout } },
-      { new: false } // Don't need the updated doc back here
+      { new: false }
     );
     if (!updatedRoomState) {
-      // This case shouldn't happen if the room exists in memory, but handle defensively
       console.error(
-        `Consistency Error: Room ${room.id} modified in memory, but not found in RoomState DB for saving!`
+        `Consistency Error: Room ${room.id} modified, but not found in DB!`
       );
-      // Attempt to rollback memory change
-      room.layout[y][x] = oldType;
+      room.layout[y][x] = oldType; // Rollback memory
       socket.emit("action_failed", {
         action: "modify_layout",
-        reason: "Server consistency error saving layout.",
+        reason: "Server consistency error.",
       });
       return;
     }
     console.log(` -> Saved updated layout for '${room.id}' to DB.`);
-
-    // 3. Broadcast Specific Tile Update
     io.to(room.id).emit("layout_tile_update", { x, y, type });
-
-    // Optional: Check if any avatars are now "stuck" on a non-walkable tile
-    // and maybe nudge them? (Adds complexity)
-    // checkAndNudgeStuckAvatars(room, x, y, type);
   } catch (error) {
     console.error(
       `Error modifying layout for room '${room.id}' at (${x},${y}):`,
       error
     );
-    // Attempt rollback in memory if DB failed and oldType was captured
     try {
       if (oldType !== undefined) {
-        // Check if oldType was set before error
         room.layout[y][x] = oldType;
-        console.log(
-          ` -> Rolled back memory change for tile (${x},${y}) in room ${room.id}.`
-        );
+        console.log(` -> Rolled back memory change.`);
       }
     } catch (rollbackError) {
-      console.error(
-        ` -> Failed to rollback memory layout change for tile (${x},${y}) in room ${room.id}:`,
-        rollbackError
-      );
+      console.error(` -> Failed rollback:`, rollbackError);
     }
     socket.emit("action_failed", {
       action: "modify_layout",
-      reason: "Server error saving layout change.",
+      reason: "Server error saving layout.",
     });
   }
 }
 
 // --- Admin: Request All Room IDs Handler ---
 function handleRequestAllRoomIds(socket) {
-  // Check if user is admin (using the flag set during connection)
   if (!socket.isAdmin) {
-    console.warn(
-      `Socket ${socket.id} attempted to request room IDs without admin privileges.`
-    );
     socket.emit("action_failed", {
       action: "list_rooms",
       reason: "Permission denied.",
     });
     return;
   }
-
-  // Get room IDs from the global 'rooms' map
-  const roomIds = Array.from(rooms.keys()).sort(); // Get keys (IDs) and sort them
-
+  const roomIds = Array.from(rooms.keys()).sort();
   console.log(
     `Admin ${socket.id} requested room list. Sending ${roomIds.length} IDs.`
   );
-
-  // Emit the list back to the requesting client ONLY
   socket.emit("all_room_ids_update", roomIds);
+}
+
+// --- NEW Trade Handlers ---
+
+function handleRequestTradeInitiate(socket, data) {
+  const { avatar: requesterAvatar, room: requesterRoom } = getAvatarAndRoom(
+    socket.id
+  );
+  if (!requesterAvatar || !requesterRoom || !data || !data.targetId) {
+    socket.emit("trade_error", { reason: "Invalid request." });
+    return;
+  }
+  if (findTradeBySocketId(socket.id)) {
+    socket.emit("trade_error", { reason: "You are already trading." });
+    return;
+  }
+  const targetAvatarId = String(data.targetId);
+  // Correct way to find avatar globally by runtime ID (avatar.id)
+  let targetAvatar = null,
+    targetRoom = null;
+  for (const roomInstance of rooms.values()) {
+    const found = Object.values(roomInstance.avatars).find(
+      (a) => a && String(a.id) === targetAvatarId
+    );
+    if (found) {
+      targetAvatar = found;
+      targetRoom = roomInstance;
+      break;
+    }
+  }
+
+  if (!targetAvatar || !targetRoom) {
+    socket.emit("trade_error", { reason: "Target not found." });
+    return;
+  }
+  if (findTradeBySocketId(targetAvatar.socketId)) {
+    socket.emit("trade_error", {
+      reason: `${escapeHtml(targetAvatar.name)} is busy.`,
+    });
+    return;
+  }
+  if (requesterRoom.id !== targetRoom.id) {
+    socket.emit("trade_error", { reason: "Must be in same room." });
+    return;
+  }
+  if (requesterAvatar.id === targetAvatar.id) {
+    socket.emit("trade_error", { reason: "Cannot trade yourself." });
+    return;
+  }
+
+  const tradeId = generateTradeId();
+  const p1Info = getParticipantInfo(socket.id);
+  const p2Info = getParticipantInfo(targetAvatar.socketId);
+  if (!p1Info || !p2Info) {
+    console.error(`Failed get participant info ${tradeId}`);
+    socket.emit("trade_error", { reason: "Server error." });
+    return;
+  }
+  activeTrades.set(tradeId, {
+    tradeId: tradeId,
+    p1: p1Info,
+    p2: p2Info,
+    startTime: Date.now(),
+  });
+  console.log(
+    `Trade initiated: ${tradeId} between ${p1Info.name} and ${p2Info.name}`
+  );
+  const targetSocket = clients[targetAvatar.socketId]?.socket;
+  if (targetSocket) {
+    targetSocket.emit("trade_request_incoming", {
+      tradeId: tradeId,
+      requesterId: String(requesterAvatar.id),
+      requesterName: requesterAvatar.name,
+    });
+
+    socket.emit("chat_message", {
+      // Using chat_message event to trigger notification system
+      avatarName: "Server", // Or maybe "System"?
+      text: `Waiting for ${escapeHtml(targetAvatar.name)} to respond...`,
+      className: "info-msg", // Use info class for standard notification style
+    });
+  } else {
+    console.error(`Failed find socket ${targetAvatar.socketId}`);
+    activeTrades.delete(tradeId);
+    socket.emit("trade_error", { reason: "Could not send request." });
+  }
+}
+
+function handleTradeRequestResponse(socket, data) {
+  const { avatar: responderAvatar } = getAvatarAndRoom(socket.id);
+  if (!responderAvatar || !data || !data.tradeId) return;
+  const tradeId = data.tradeId;
+  const trade = activeTrades.get(tradeId);
+  if (!trade || trade.p2.socketId !== socket.id) return;
+  const requesterSocket = clients[trade.p1.socketId]?.socket;
+  if (data.accepted) {
+    console.log(`Trade ${tradeId} accepted by ${responderAvatar.name}.`);
+    if (requesterSocket)
+      requesterSocket.emit("trade_start", {
+        tradeId: trade.tradeId,
+        partnerId: String(trade.p2.avatarId),
+        partnerName: trade.p2.name,
+      });
+    socket.emit("trade_start", {
+      tradeId: trade.tradeId,
+      partnerId: String(trade.p1.avatarId),
+      partnerName: trade.p1.name,
+    });
+  } else {
+    console.log(`Trade ${tradeId} declined by ${responderAvatar.name}.`);
+    activeTrades.delete(tradeId);
+    if (requesterSocket)
+      requesterSocket.emit("trade_cancelled", {
+        tradeId: tradeId,
+        reason: `${escapeHtml(responderAvatar.name)} declined.`,
+      });
+  }
+}
+
+function handleTradeUpdateOffer(socket, data) {
+  const trade = findTradeBySocketId(socket.id);
+  if (
+    !trade ||
+    !data ||
+    data.tradeId !== trade.tradeId ||
+    !data.items ||
+    data.currency == null
+  )
+    return;
+  const isP1 = trade.p1.socketId === socket.id;
+  const playerOffer = isP1 ? trade.p1.offer : trade.p2.offer;
+  const { avatar: playerAvatar } = getAvatarAndRoom(socket.id);
+  if (!playerAvatar) {
+    endTradeSession(trade.tradeId, "Player data lost.");
+    return;
+  }
+
+  const newItems = data.items;
+  const newCurrency = Math.max(0, parseInt(data.currency, 10) || 0);
+  let validationError = null;
+  if (newCurrency > playerAvatar.currency)
+    validationError = "Insufficient coins.";
+  if (!validationError) {
+    for (const itemId in newItems) {
+      const offeredQty = newItems[itemId];
+      if (offeredQty <= 0) continue;
+      if (!playerAvatar.hasItem(itemId, offeredQty)) {
+        const def = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+          (d) => d.id === itemId
+        );
+        validationError = `Insufficient quantity of ${escapeHtml(
+          def?.name || itemId
+        )}.`;
+        break;
+      }
+    }
+  }
+  if (validationError) {
+    socket.emit("trade_error", { reason: validationError });
+    return;
+  }
+
+  playerOffer.items = newItems;
+  playerOffer.currency = newCurrency;
+  trade.p1.confirmed = false;
+  trade.p2.confirmed = false; // Reset confirmations
+  console.log(
+    `Trade ${trade.tradeId}: ${
+      isP1 ? trade.p1.name : trade.p2.name
+    } updated offer.`
+  );
+  const p1Socket = clients[trade.p1.socketId]?.socket;
+  const p2Socket = clients[trade.p2.socketId]?.socket;
+  // Prepare payloads tailored for each recipient
+  const p1OfferPayload = {
+    tradeId: trade.tradeId,
+    isMyOffer: isP1, // P1's update is their own if isP1 is true
+    offer: isP1 ? trade.p1.offer : trade.p2.offer, // Send the updated offer
+  };
+  const p2OfferPayload = {
+    tradeId: trade.tradeId,
+    isMyOffer: !isP1, // P1's update is NOT P2's own offer
+    offer: isP1 ? trade.p1.offer : trade.p2.offer, // Send the updated offer
+  };
+
+  // Reset confirmation payload (same for both perspectives, as both reset)
+  const confirmResetPayload = {
+    tradeId: trade.tradeId,
+    myConfirmed: false, // Reset my perspective
+    partnerConfirmed: false, // Reset partner perspective
+  };
+  if (p1Socket) {
+    p1Socket.emit("trade_offer_update", p1OfferPayload);
+    p1Socket.emit("trade_confirm_update", confirmResetPayload); // Send reset confirmation
+  }
+  if (p2Socket) {
+    p2Socket.emit("trade_offer_update", p2OfferPayload);
+    p2Socket.emit("trade_confirm_update", confirmResetPayload); // Send reset confirmation
+  }
+}
+
+async function handleTradeConfirmOffer(socket, data) {
+  const trade = findTradeBySocketId(socket.id);
+
+  // Basic validation of the trade and request
+  if (!trade || !data || data.tradeId !== trade.tradeId) {
+    console.warn(
+      `[handleTradeConfirmOffer] Invalid request or trade not found for socket ${socket.id}, data:`,
+      data
+    );
+    // Optionally emit an error back to the client if desired
+    // socket.emit('trade_error', { reason: 'Invalid trade confirmation request.' });
+    return;
+  }
+
+  const isP1 = trade.p1.socketId === socket.id;
+  const playerState = isP1 ? trade.p1 : trade.p2;
+
+  // Prevent re-confirming
+  if (playerState.confirmed) {
+    console.log(
+      `Trade ${trade.tradeId}: ${playerState.name} tried to re-confirm.`
+    );
+    return;
+  }
+
+  playerState.confirmed = true;
+  console.log(`Trade ${trade.tradeId}: ${playerState.name} confirmed.`);
+
+  // --- Notify both clients about the confirmation status update ---
+  const p1Socket = clients[trade.p1.socketId]?.socket;
+  const p2Socket = clients[trade.p2.socketId]?.socket;
+
+  // Payload for P1 (my=P1, partner=P2)
+  const p1ConfirmPayload = {
+    tradeId: trade.tradeId,
+    myConfirmed: trade.p1.confirmed,
+    partnerConfirmed: trade.p2.confirmed,
+  };
+  // Payload for P2 (my=P2, partner=P1) - SWAPPED
+  const p2ConfirmPayload = {
+    tradeId: trade.tradeId,
+    myConfirmed: trade.p2.confirmed, // P2's status is 'my' for them
+    partnerConfirmed: trade.p1.confirmed, // P1's status is 'partner' for them
+  };
+
+  // Emit confirmation update to both players
+  if (p1Socket) p1Socket.emit("trade_confirm_update", p1ConfirmPayload);
+  if (p2Socket) p2Socket.emit("trade_confirm_update", p2ConfirmPayload);
+
+  // --- Check if both players have confirmed to execute the trade ---
+  if (trade.p1.confirmed && trade.p2.confirmed) {
+    console.log(`Trade ${trade.tradeId}: Both confirmed. Executing...`);
+    const { avatar: p1Avatar } = getAvatarAndRoom(trade.p1.socketId);
+    const { avatar: p2Avatar } = getAvatarAndRoom(trade.p2.socketId);
+
+    // --- Final Validation before execution (ensure players/items/currency are still valid) ---
+    let errorReason = null;
+    if (!p1Avatar || !p2Avatar) {
+      errorReason = "One or both players disconnected.";
+    } else if (p1Avatar.currency < trade.p1.offer.currency) {
+      errorReason = `${escapeHtml(p1Avatar.name)} has insufficient coins.`;
+    } else if (p2Avatar.currency < trade.p2.offer.currency) {
+      errorReason = `${escapeHtml(p2Avatar.name)} has insufficient coins.`;
+    } else {
+      // Check items for Player 1
+      for (const itemId in trade.p1.offer.items) {
+        if (!p1Avatar.hasItem(itemId, trade.p1.offer.items[itemId])) {
+          const def = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+            (d) => d.id === itemId
+          );
+          errorReason = `${escapeHtml(
+            p1Avatar.name
+          )} no longer has sufficient ${escapeHtml(def?.name || itemId)}.`;
+          break;
+        }
+      }
+      // Check items for Player 2 (only if P1 was ok)
+      if (!errorReason) {
+        for (const itemId in trade.p2.offer.items) {
+          if (!p2Avatar.hasItem(itemId, trade.p2.offer.items[itemId])) {
+            const def = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+              (d) => d.id === itemId
+            );
+            errorReason = `${escapeHtml(
+              p2Avatar.name
+            )} no longer has sufficient ${escapeHtml(def?.name || itemId)}.`;
+            break;
+          }
+        }
+      }
+    }
+
+    // If validation fails, cancel the trade
+    if (errorReason) {
+      console.error(
+        `Trade ${trade.tradeId} failed final validation before execution: ${errorReason}`
+      );
+      endTradeSession(trade.tradeId, `Trade failed: ${errorReason}`);
+      return;
+    }
+
+    // --- Perform Exchange (Database updates WITHOUT Transaction) ---
+    // WARNING: These updates are NOT atomic. If an error occurs between
+    // updating P1 and P2, the database WILL be INCONSISTENT.
+    try {
+      console.log(
+        `Trade ${trade.tradeId}: Starting DB updates (No Transaction).`
+      );
+
+      // 1. Prepare updates (same logic as before transactions)
+      const p1CurrencyChange =
+        trade.p2.offer.currency - trade.p1.offer.currency;
+      const p2CurrencyChange =
+        trade.p1.offer.currency - trade.p2.offer.currency;
+
+      const p1Updates = { $inc: { currency: p1CurrencyChange } };
+      const p2Updates = { $inc: { currency: p2CurrencyChange } };
+      const p1InvUpdates = {}; // Stores $inc values for p1 inventory
+      const p2InvUpdates = {}; // Stores $inc values for p2 inventory
+
+      // Calculate inventory changes for Player 1
+      for (const itemId in trade.p1.offer.items)
+        p1InvUpdates[`inventory.${itemId}`] = -trade.p1.offer.items[itemId]; // Remove P1's offer
+      for (const itemId in trade.p2.offer.items)
+        p1InvUpdates[`inventory.${itemId}`] =
+          (p1InvUpdates[`inventory.${itemId}`] || 0) +
+          trade.p2.offer.items[itemId]; // Add P2's offer
+
+      // Calculate inventory changes for Player 2
+      for (const itemId in trade.p2.offer.items)
+        p2InvUpdates[`inventory.${itemId}`] = -trade.p2.offer.items[itemId]; // Remove P2's offer
+      for (const itemId in trade.p1.offer.items)
+        p2InvUpdates[`inventory.${itemId}`] =
+          (p2InvUpdates[`inventory.${itemId}`] || 0) +
+          trade.p1.offer.items[itemId]; // Add P1's offer
+
+      // Combine inventory changes with currency changes
+      if (Object.keys(p1InvUpdates).length > 0)
+        p1Updates.$inc = { ...p1Updates.$inc, ...p1InvUpdates };
+      if (Object.keys(p2InvUpdates).length > 0)
+        p2Updates.$inc = { ...p2Updates.$inc, ...p2InvUpdates };
+
+      // 2. Execute updates sequentially (NO LONGER ATOMIC)
+      await User.findByIdAndUpdate(trade.p1.userId, p1Updates); // NO {session}
+      console.log(
+        `Trade ${trade.tradeId}: Updated P1 (${trade.p1.name}, ID: ${trade.p1.userId}) in DB.`
+      );
+
+      // --- If an error happens here, P1 is updated but P2 is not ---
+      await User.findByIdAndUpdate(trade.p2.userId, p2Updates); // NO {session}
+      console.log(
+        `Trade ${trade.tradeId}: Updated P2 (${trade.p2.name}, ID: ${trade.p2.userId}) in DB.`
+      );
+
+      // 3. Prune zero/negative items after updates (Best effort)
+      // Refetch users to get the exact state after increments
+      const finalP1 = await User.findById(trade.p1.userId);
+      const finalP2 = await User.findById(trade.p2.userId);
+      const p1Unsets = {};
+      const p2Unsets = {};
+
+      if (finalP1?.inventory) {
+        finalP1.inventory.forEach((value, key) => {
+          if (value <= 0) p1Unsets[`inventory.${key}`] = "";
+        });
+      }
+      if (finalP2?.inventory) {
+        finalP2.inventory.forEach((value, key) => {
+          if (value <= 0) p2Unsets[`inventory.${key}`] = "";
+        });
+      }
+
+      // Execute unsets if needed
+      if (Object.keys(p1Unsets).length > 0)
+        await User.findByIdAndUpdate(trade.p1.userId, { $unset: p1Unsets }); // NO {session}
+      if (Object.keys(p2Unsets).length > 0)
+        await User.findByIdAndUpdate(trade.p2.userId, { $unset: p2Unsets }); // NO {session}
+      console.log(`Trade ${trade.tradeId}: Pruned zero items in DB (if any).`);
+
+      console.log(`Trade ${trade.tradeId}: DB updates nominally complete.`);
+
+      // 4. Update In-Memory ServerAvatar State
+      p1Avatar.currency += p1CurrencyChange;
+      p2Avatar.currency += p2CurrencyChange;
+
+      for (const itemId in trade.p1.offer.items) {
+        p1Avatar.removeItem(itemId, trade.p1.offer.items[itemId]);
+        p2Avatar.addItem(itemId, trade.p1.offer.items[itemId]);
+      }
+      for (const itemId in trade.p2.offer.items) {
+        p2Avatar.removeItem(itemId, trade.p2.offer.items[itemId]);
+        p1Avatar.addItem(itemId, trade.p2.offer.items[itemId]);
+      }
+      console.log(`Trade ${trade.tradeId}: Updated in-memory avatar states.`);
+
+      // 5. Notify Clients of Success and Update State
+      const completeMsg = {
+        tradeId: trade.tradeId,
+        message: "Trade completed successfully!",
+      };
+      if (p1Socket) {
+        p1Socket.emit("trade_complete", completeMsg);
+        p1Socket.emit("currency_update", { currency: p1Avatar.currency });
+        p1Socket.emit("inventory_update", p1Avatar.getInventoryDTO());
+      }
+      if (p2Socket) {
+        p2Socket.emit("trade_complete", completeMsg);
+        p2Socket.emit("currency_update", { currency: p2Avatar.currency });
+        p2Socket.emit("inventory_update", p2Avatar.getInventoryDTO());
+      }
+
+      // 6. Clean up active trade
+      activeTrades.delete(trade.tradeId);
+      console.log(`Trade ${trade.tradeId}: Completed and cleaned up.`);
+    } catch (error) {
+      // --- Catch block for errors during sequential DB updates ---
+      console.error(
+        `Trade ${trade.tradeId}: DB Update Error during sequential execution: ${error.message}`
+      );
+      console.error(error); // Log the full error stack trace
+
+      // IMPORTANT: Database might be INCONSISTENT now.
+      console.error(
+        `CRITICAL WARNING: Trade ${trade.tradeId} failed mid-execution. Database state between players ${trade.p1.name} and ${trade.p2.name} may be inconsistent!`
+      );
+
+      // Notify users the trade failed server-side. They might need support intervention.
+      endTradeSession(
+        trade.tradeId,
+        "Critical server error during finalization. Please contact support if items/currency seem wrong."
+      );
+    }
+    // NO FINALLY block needed as there's no session to end
+  }
+}
+
+function handleTradeCancel(socket, data) {
+  const trade = findTradeBySocketId(socket.id);
+  if (!trade || !data || data.tradeId !== trade.tradeId) return;
+  console.log(
+    `Trade ${trade.tradeId} cancelled by ${
+      trade.p1.socketId === socket.id ? trade.p1.name : trade.p2.name
+    }.`
+  );
+  endTradeSession(trade.tradeId, "Trade cancelled.", socket.id);
 }
 
 // --- Disconnect Handler (ASYNC) ---
 async function handleDisconnect(socket, reason) {
+  // --- Add Trade Cancellation on Disconnect ---
+  const ongoingTrade = findTradeBySocketId(socket.id);
+  if (ongoingTrade) {
+    console.log(
+      `Player ${socket.id} disconnected during trade ${ongoingTrade.tradeId}. Cancelling trade.`
+    );
+    endTradeSession(ongoingTrade.tradeId, "Player disconnected.");
+  }
+  // --- End Trade Cancellation ---
+
   console.log(`Client disconnected: ${socket.id}. Reason: ${reason}`);
   const clientInfo = clients[socket.id];
   let avatar = null,
     currentRoom = null,
     userIdToSave = null;
-
   if (clientInfo && clientInfo.userId) {
     userIdToSave = clientInfo.userId;
     if (clientInfo.avatarId !== null) {
@@ -1928,7 +2324,6 @@ async function handleDisconnect(socket, reason) {
     );
   // --- End Save Player Data ---
 
-  // Remove avatar from the in-memory game world
   if (avatar && currentRoom) {
     const removed = currentRoom.removeAvatar(socket.id);
     if (removed) {
@@ -1939,11 +2334,9 @@ async function handleDisconnect(socket, reason) {
       io.to(currentRoom.id).emit("user_list_update", currentRoom.getUserList());
     } else
       console.warn(
-        `Disconnect: Avatar ${avatar.id} not found in room ${currentRoom.id} map during removal.`
+        `Disconnect: Avatar ${avatar.id} not found in room ${currentRoom.id} map.`
       );
   }
-
-  // Remove from global client tracking map
   if (clients[socket.id]) delete clients[socket.id];
 }
 
@@ -1952,9 +2345,8 @@ function handleConnectError(socket, err) {
   console.error(
     `Socket connect_error for ${socket?.id || "unknown"}: ${err.message}`
   );
-  // Call disconnect handler to ensure cleanup even on connection failure
   handleDisconnect(
-    socket || { id: `error_${Date.now()}` }, // Provide a dummy socket if needed
+    socket || { id: `error_${Date.now()}` },
     `Connection error: ${err.message}`
   );
 }
