@@ -1,6 +1,7 @@
 # ZanyTown - Isometric Web Sandbox
 
-![image](https://github.com/user-attachments/assets/8cdf32e6-83ea-485e-b192-137b9feeed87)
+![image](https://github.com/user-attachments/assets/147a9529-edbf-4390-b1db-bacabb69efcb)
+
 
 ZanyTown is a simple, browser-based isometric sandbox game where players can explore rooms, interact with furniture, chat with others, and customize their environment. Built with Node.js, Socket.IO, Express, and MongoDB.
 
