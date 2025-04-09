@@ -13,6 +13,8 @@ export class ClientFurniture extends ClientGameObject {
     this.isDoor = dto.isDoor || false;
     this.targetRoomId = dto.targetRoomId || null;
 
+    this.ownerId = dto.ownerId || null;
+
     this.definition = null; // Cached definition from SHARED_CONFIG
     this.canRecolor = false; // From definition
     this.isSelected = false; // For edit mode selection highlight
@@ -64,6 +66,8 @@ export class ClientFurniture extends ClientGameObject {
     if (dto.colorOverride !== undefined) this.colorOverride = dto.colorOverride;
     if (dto.isDoor !== undefined) this.isDoor = dto.isDoor;
     if (dto.targetRoomId !== undefined) this.targetRoomId = dto.targetRoomId;
+
+    if (dto.ownerId !== undefined) this.ownerId = dto.ownerId;
 
     // Ensure definition is loaded if missed initially
     if (!this.definition) this._updateDefinition();

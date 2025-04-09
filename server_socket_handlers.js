@@ -5,6 +5,7 @@ const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config");
 const { ServerAvatar, ServerFurniture } = require("./lib/game_objects");
 const { rotateDirection, escapeHtml } = require("./lib/utils"); // Added escapeHtml
 const Furniture = require("./models/furniture"); // Database model
+const User = require("./models/user"); // Import User model (needed in handleConnection)
 const { findAvatarGlobally } = require("./server_console"); // For admin commands
 const RoomState = require("./models/roomState");
 const ServerRoom = require("./lib/room");
@@ -98,6 +99,30 @@ function getAvatarAndRoom(socketId) {
   return { avatar, room, socket: clientInfo.socket };
 }
 
+// --- NEW: Handler for Room List Request ---
+function handleRequestPublicRooms(socket) {
+  // No specific permissions needed to request the list
+  const roomListData = [];
+  const sortedRoomIds = Array.from(rooms.keys()).sort(); // Sort alphabetically
+
+  sortedRoomIds.forEach((roomId) => {
+    const room = rooms.get(roomId);
+    if (room) {
+      // For now, list all rooms. Add filtering logic here later if needed (e.g., public/private flags)
+      roomListData.push({
+        id: roomId,
+        playerCount: room.getUserList().length, // Get current player count
+      });
+    }
+  });
+
+  console.log(
+    `Socket ${socket.id} requested room list. Sending ${roomListData.length} rooms.`
+  );
+  socket.emit("public_rooms_update", roomListData);
+}
+// --- END NEW HANDLER ---
+
 // --- Event Handler Functions ---
 
 // --- Connection Handler (ASYNC due to DB read) ---
@@ -182,6 +207,8 @@ async function handleConnection(socket) {
 
   clients[socket.id].avatarId = newAvatar.id; // Store runtime ID
 
+  socket.emit("your_persistent_id", String(userData._id));
+
   socket.join(room.id);
   console.log(`Socket ${socket.id} joined Socket.IO room: ${room.id}`);
 
@@ -204,24 +231,24 @@ async function handleConnection(socket) {
 
   // Attach Event Listeners
   socket.on("request_move", (data) => handleRequestMove(socket, data));
-  socket.on("send_chat", (message) => handleSendChat(socket, message)); // Already updated with sanitization
+  socket.on("send_chat", (message) => handleSendChat(socket, message));
   socket.on("request_place_furni", (data) =>
     handleRequestPlaceFurni(socket, data)
-  ); // Updated Async
+  );
   socket.on("request_rotate_furni", (data) =>
     handleRequestRotateFurni(socket, data)
-  ); // Async
+  );
   socket.on("request_pickup_furni", (data) =>
     handleRequestPickupFurni(socket, data)
-  ); // Updated Async
+  );
   socket.on("request_sit", (data) => handleRequestSit(socket, data));
   socket.on("request_stand", () => handleRequestStand(socket));
   socket.on("request_user_list", () => handleRequestUserList(socket));
   socket.on("request_profile", (data) => handleRequestProfile(socket, data));
-  socket.on("request_use_furni", (data) => handleRequestUseFurni(socket, data)); // Async
+  socket.on("request_use_furni", (data) => handleRequestUseFurni(socket, data));
   socket.on("request_recolor_furni", (data) =>
     handleRequestRecolorFurni(socket, data)
-  ); // Async
+  );
   socket.on("request_buy_item", (data) => handleRequestBuyItem(socket, data));
   socket.on("request_change_room", (data) => handleChangeRoom(socket, data));
   socket.on("request_create_room", (data) =>
@@ -231,7 +258,8 @@ async function handleConnection(socket) {
     handleRequestModifyLayout(socket, data)
   );
   socket.on("request_all_room_ids", () => handleRequestAllRoomIds(socket));
-  socket.on("disconnect", (reason) => handleDisconnect(socket, reason)); // Async
+  socket.on("request_public_rooms", () => handleRequestPublicRooms(socket)); // Added listener
+  socket.on("disconnect", (reason) => handleDisconnect(socket, reason));
   socket.on("connect_error", (err) => handleConnectError(socket, err));
 }
 
@@ -296,7 +324,6 @@ function handleRequestMove(socket, target) {
 }
 
 // --- Send Chat Handler (with Sanitization) ---
-// [This function was provided in the previous step, including it here for completeness]
 function handleSendChat(socket, message) {
   const { avatar, room } = getAvatarAndRoom(socket.id);
   if (!avatar || !room || typeof message !== "string") {
@@ -761,9 +788,14 @@ async function handleRequestPlaceFurni(socket, data) {
     y: gridY,
     width: definition.width || 1,
     height: definition.height || 1,
+    // Mimic getOccupiedTiles by adding the definition context it needs internally
+    definition: definition,
   };
+
+  // Call getOccupiedTiles with the correct context
   const occupiedTiles =
     ServerFurniture.prototype.getOccupiedTiles.call(tempFurniProto);
+
   const placeZ =
     room.getStackHeightAt(gridX, gridY) + (definition.zOffset || 0); // Calculate Z needed for validation AND saving
 
@@ -814,7 +846,16 @@ async function handleRequestPlaceFurni(socket, data) {
     }
   }
   // Check height limit
-  if (placeZ >= SHARED_CONFIG.MAX_STACK_Z) {
+  // Calculate the top surface Z of the new item
+  const itemStackHeight =
+    definition.stackHeight ?? (definition.isFlat ? 0 : 1.0);
+  const itemStackContrib =
+    itemStackHeight * (SHARED_CONFIG.DEFAULT_STACK_HEIGHT ?? 0.5);
+  const itemTopZ = placeZ + (definition.isFlat ? 0 : itemStackContrib);
+
+  // Compare the *top* of the item against the max stack height
+  const epsilon = 0.001;
+  if (itemTopZ >= SHARED_CONFIG.MAX_STACK_Z - epsilon) {
     socket.emit("action_failed", {
       action: "place",
       reason: `Stack height limit reached.`,
@@ -930,7 +971,12 @@ async function handleRequestRotateFurni(socket, data) {
   }
 
   const clientInfo = clients[socket.id]; // Ownership check
-  if (furni.ownerId !== null && String(furni.ownerId) !== clientInfo?.userId) {
+  // Allow Admins to rotate any furniture
+  if (
+    !socket.isAdmin &&
+    furni.ownerId !== null &&
+    String(furni.ownerId) !== clientInfo?.userId
+  ) {
     socket.emit("action_failed", {
       action: "rotate",
       reason: "You don't own this.",
@@ -994,12 +1040,12 @@ async function handleRequestPickupFurni(socket, data) {
     return;
   }
 
-  // Validation: Ownership
+  // Validation: Ownership (Allow Admins)
   const clientInfo = clients[socket.id];
   if (
-    furniInstance.ownerId === null ||
-    (furniInstance.ownerId !== null &&
-      String(furniInstance.ownerId) !== clientInfo?.userId)
+    !socket.isAdmin && // Admin check
+    furniInstance.ownerId !== null &&
+    String(furniInstance.ownerId) !== clientInfo?.userId
   ) {
     socket.emit("action_failed", {
       action: "pickup",
@@ -1086,13 +1132,30 @@ async function handleRequestPickupFurni(socket, data) {
         `CRITICAL ERROR: Failed to add item ${definitionIdToRefund} (DB ID: ${furniId}) to ${avatar.name} inventory AFTER DB delete! Attempting DB compensation.`
       );
       try {
+        // Add ownerId to the data before recreating
+        furniDataForRecreation.ownerId = clientInfo?.userId || null;
         await Furniture.create(furniDataForRecreation);
+        console.log(`[COMPENSATION] Re-created DB document for ${furniId}.`);
+        // TODO: Need to put the item back into the room's memory as well!
+        const recreatedInstance = new ServerFurniture(
+          furniDataForRecreation.definitionId,
+          furniDataForRecreation.x,
+          furniDataForRecreation.y,
+          furniDataForRecreation.z,
+          furniDataForRecreation.rotation,
+          furniId, // Use original ID
+          furniDataForRecreation.ownerId,
+          furniDataForRecreation.state,
+          furniDataForRecreation.colorOverride
+        );
+        room.addFurniture(recreatedInstance);
+        io.to(room.id).emit("furni_added", recreatedInstance.toDTO()); // Notify clients it's back
         console.log(
-          `[COMPENSATION] Re-created DB document for ${furniId}.`
-        ); /* TODO: Consider forcing room reload for clients */
+          `[COMPENSATION] Re-added instance ${furniId} to room memory and broadcasted.`
+        );
       } catch (recreateError) {
         console.error(
-          `[COMPENSATION FAILED] Could not re-create DB document ${furniId}! Manual cleanup required.`,
+          `[COMPENSATION FAILED] Could not re-create DB document or memory instance for ${furniId}! Manual cleanup required.`,
           recreateError
         );
       }
@@ -1301,9 +1364,13 @@ async function handleRequestRecolorFurni(socket, data) {
     });
     return;
   }
-  // Ownership check
+  // Ownership check (Allow Admins)
   const clientInfo = clients[socket.id];
-  if (furni.ownerId !== null && String(furni.ownerId) !== clientInfo?.userId) {
+  if (
+    !socket.isAdmin &&
+    furni.ownerId !== null &&
+    String(furni.ownerId) !== clientInfo?.userId
+  ) {
     socket.emit("action_failed", { action: "recolor", reason: "Not owner." });
     return;
   }
@@ -1316,8 +1383,10 @@ async function handleRequestRecolorFurni(socket, data) {
   }
   // Color validation
   const targetColor = data.colorHex;
+  // Allow null/empty string for resetting
   if (
-    targetColor &&
+    targetColor !== null &&
+    targetColor !== "" &&
     typeof targetColor === "string" &&
     !SHARED_CONFIG.VALID_RECOLOR_HEX.includes(targetColor.toUpperCase())
   ) {
@@ -1446,7 +1515,6 @@ function handleRequestBuyItem(socket, data) {
 }
 
 // --- Room Change Handler ---
-// (Handles its own logic, including finding rooms, validating, and broadcasting)
 function handleChangeRoom(socket, data) {
   const { avatar: currentAvatar, room: currentRoom } = getAvatarAndRoom(
     socket.id
@@ -1542,6 +1610,7 @@ function handleChangeRoom(socket, data) {
   );
 }
 
+// --- Admin: Create Room Handler (ASYNC) ---
 async function handleRequestCreateRoom(socket, data) {
   const { avatar } = getAvatarAndRoom(socket.id); // Get avatar for permission check
   if (!avatar || !socket.isAdmin) {
@@ -1651,6 +1720,7 @@ async function handleRequestCreateRoom(socket, data) {
   }
 }
 
+// --- Admin: Modify Layout Handler (ASYNC) ---
 async function handleRequestModifyLayout(socket, data) {
   const { avatar, room } = getAvatarAndRoom(socket.id);
   if (!avatar || !room || !socket.isAdmin) {
@@ -1710,9 +1780,10 @@ async function handleRequestModifyLayout(socket, data) {
   }
 
   // --- Update Layout ---
+  let oldType; // Declare here to be accessible in catch block
   try {
     // 1. Update In-Memory Layout
-    const oldType = room.layout[y][x];
+    oldType = room.layout[y][x];
     if (oldType === type) return; // No change needed
 
     room.layout[y][x] = type;
@@ -1733,7 +1804,7 @@ async function handleRequestModifyLayout(socket, data) {
       console.error(
         `Consistency Error: Room ${room.id} modified in memory, but not found in RoomState DB for saving!`
       );
-      // Attempt to rollback memory change?
+      // Attempt to rollback memory change
       room.layout[y][x] = oldType;
       socket.emit("action_failed", {
         action: "modify_layout",
@@ -1754,10 +1825,21 @@ async function handleRequestModifyLayout(socket, data) {
       `Error modifying layout for room '${room.id}' at (${x},${y}):`,
       error
     );
-    // Attempt rollback in memory if DB failed
+    // Attempt rollback in memory if DB failed and oldType was captured
     try {
-      room.layout[y][x] = oldType;
-    } catch (e) {}
+      if (oldType !== undefined) {
+        // Check if oldType was set before error
+        room.layout[y][x] = oldType;
+        console.log(
+          ` -> Rolled back memory change for tile (${x},${y}) in room ${room.id}.`
+        );
+      }
+    } catch (rollbackError) {
+      console.error(
+        ` -> Failed to rollback memory layout change for tile (${x},${y}) in room ${room.id}:`,
+        rollbackError
+      );
+    }
     socket.emit("action_failed", {
       action: "modify_layout",
       reason: "Server error saving layout change.",
@@ -1765,11 +1847,7 @@ async function handleRequestModifyLayout(socket, data) {
   }
 }
 
-/**
- * Handles the client's request for a list of all currently loaded room IDs.
- * Only processes the request if the socket user is an admin.
- * @param {import('socket.io').Socket} socket - The requesting client's socket.
- */
+// --- Admin: Request All Room IDs Handler ---
 function handleRequestAllRoomIds(socket) {
   // Check if user is admin (using the flag set during connection)
   if (!socket.isAdmin) {
@@ -1874,8 +1952,9 @@ function handleConnectError(socket, err) {
   console.error(
     `Socket connect_error for ${socket?.id || "unknown"}: ${err.message}`
   );
+  // Call disconnect handler to ensure cleanup even on connection failure
   handleDisconnect(
-    socket || { id: `error_${Date.now()}` },
+    socket || { id: `error_${Date.now()}` }, // Provide a dummy socket if needed
     `Connection error: ${err.message}`
   );
 }

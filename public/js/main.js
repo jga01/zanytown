@@ -9,22 +9,24 @@ import { connectToServer, disconnectSocket } from "./network.js";
 import { initRenderer, resizeRenderer } from "./renderer.js";
 import {
   initUIManager,
-  resetUIState, // Although resetUIState shows overlay, main.js calls it during initialization logic path modification
+  resetUIState, // Keep this import
   hideProfilePanel,
   hideRecolorPanel,
   hideShopPanel,
-  updatePickupButtonState,
-  updateRecolorButtonState,
+  // REMOVED updatePickupButtonState, // <-- REMOVED
+  // REMOVED updateRecolorButtonState, // <-- REMOVED
   updateInventorySelection,
   updateUICursor,
-  updateCurrencyDisplay, // Keep import, used in initClient
+  updateCurrencyDisplay,
   populateInventory,
   updateUserListPanel,
-  logChatMessage, // Keep import, used in initClient
+  logChatMessage,
   centerCameraOnRoom,
-  showLoadingOverlay, // Import showLoadingOverlay
-  hideLoadingOverlay, // Import hideLoadingOverlay
-} from "./uiManager.js";
+  showLoadingOverlay,
+  hideLoadingOverlay,
+  updateAdminUI, // Keep for admin logic
+  togglePanel, // Keep for panel logic if needed here (though maybe not)
+} from "./uiManager.js"; // Adjusted imports
 import { setupInputListeners, cleanupInputListeners } from "./inputHandler.js";
 import { startGameLoop, stopGameLoop } from "./gameLoop.js";
 import { loadSounds } from "./sounds.js";
@@ -89,10 +91,12 @@ async function initClient() {
   showLoadingOverlay("Loading Assets..."); // Update message
 
   // --- Step 6: Disable Interaction Buttons Initially ---
-  uiState.openShopBtn?.setAttribute("disabled", "true");
-  uiState.toggleEditBtn?.setAttribute("disabled", "true");
-  uiState.pickupFurniBtn?.setAttribute("disabled", "true");
-  uiState.recolorFurniBtn?.setAttribute("disabled", "true"); // Use correct name
+  // Buttons are now toggled, so disabling them might happen differently
+  // based on connection status later in network.js
+  // Let's disable key interactive buttons until connected
+  if (uiState.toggleShopBtn) uiState.toggleShopBtn.disabled = true;
+  if (uiState.toggleEditBottomBtn) uiState.toggleEditBottomBtn.disabled = true;
+  if (uiState.toggleAdminBtn) uiState.toggleAdminBtn.disabled = true; // Initially disabled
 
   // --- Step 7: Initial Canvas Resize & Setup Listener ---
   const debouncedResize = debounce(() => {
@@ -160,7 +164,8 @@ async function initClient() {
  */
 export function resetLocalState() {
   console.log("Resetting local client room state...");
-  showLoadingOverlay("Loading Room..."); // Ensure overlay shows during reset
+  // Use the resetUIState function from uiManager which now handles showing overlay and resetting UI elements
+  resetUIState(); // Call the comprehensive reset function
 
   // --- Clear Room-Specific Game Objects/State ---
   // Clear bubbles from avatars before clearing avatars array
@@ -176,60 +181,9 @@ export function resetLocalState() {
   gameState.roomLayout = [];
   gameState.roomCols = 0;
   gameState.roomRows = 0;
-  gameState.currentRoomId = null;
+  gameState.currentRoomId = null; // Ensure current room ID is cleared
 
-  // --- Reset UI State related to room context ---
-  // Clear DOM elements managed by UI manager
-  if (uiState.chatLogDiv) uiState.chatLogDiv.innerHTML = "";
-  uiState.chatMessages = []; // Clear message references
-  if (uiState.inventoryItemsDiv)
-    uiState.inventoryItemsDiv.innerHTML = "<p><i>Entering room...</i></p>";
-  if (uiState.userListContent)
-    uiState.userListContent.innerHTML = "<li><i>Joining room...</i></li>";
-  if (uiState.debugDiv) uiState.debugDiv.textContent = "Resetting state...";
-  if (uiState.bubbleContainer) uiState.bubbleContainer.innerHTML = "";
-  uiState.activeChatBubbles = []; // Clear bubble references
-  if (uiState.shopItemsDiv)
-    uiState.shopItemsDiv.innerHTML = "<p><i>Stocking shelves...</i></p>";
-
-  // Hide floating panels
-  hideProfilePanel();
-  hideRecolorPanel();
-  hideShopPanel();
-
-  // Reset Edit Mode State
-  uiState.isEditMode = false;
-  // Ensure CLIENT_CONFIG is available before accessing its properties
-  if (CLIENT_CONFIG) {
-    uiState.editMode.state = CLIENT_CONFIG.EDIT_STATE_NAVIGATE;
-  } else {
-    uiState.editMode.state = "navigate"; // Fallback if config not ready (shouldn't happen here normally)
-  }
-  uiState.editMode.selectedInventoryItemId = null;
-  uiState.editMode.selectedFurnitureId = null;
-  uiState.editMode.placementValid = false;
-  uiState.editMode.placementRotation = 0;
-  uiState.activeRecolorFurniId = null;
-
-  // --- Update UI Buttons/Cursor/Displays ---
-  updatePickupButtonState();
-  updateRecolorButtonState();
-  updateInventorySelection();
-  updateUICursor();
-
-  if (uiState.toggleEditBtn) {
-    uiState.toggleEditBtn.textContent = `Make Stuff? (Off)`;
-    uiState.toggleEditBtn.classList.remove("active");
-  }
-
-  // Update Displays to Loading/Default State
-  if (uiState.roomNameDisplay)
-    uiState.roomNameDisplay.textContent = "Room: Loading...";
-  // Currency display usually updated separately, but reset placeholder
-  if (uiState.currencyDisplay)
-    uiState.currencyDisplay.textContent = "Silly Coins: ...";
-  document.title = "ZanyTown - Loading...";
-
+  // Note: Most UI clearing is now handled within resetUIState in uiManager.js
   // The loading overlay remains visible until the next room_state is processed
 }
 
@@ -240,7 +194,8 @@ function cleanup() {
   disconnectSocket();
   cleanupInputListeners();
   // Optional: Remove resize listener if attached to window
-  // window.removeEventListener('resize', debouncedResize); // Need to ensure debouncedResize is accessible here
+  // Need to make debouncedResize accessible or store the reference differently
+  // window.removeEventListener('resize', debouncedResize);
 }
 
 // Add listener for page unload events

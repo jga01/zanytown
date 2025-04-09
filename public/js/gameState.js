@@ -1,38 +1,81 @@
-export const camera = { x: 0, y: 0, zoom: 1.0 };
-
-export const gameState = {
-  // Room specific state
-  roomLayout: [],
-  roomCols: 0,
-  roomRows: 0,
-  clientTiles: [], // Array of ClientTile instances
-  furniture: {}, // Map: string -> ClientFurniture instance
-  avatars: {}, // Map: string -> ClientAvatar instance
-  highlightedTile: null, // {x, y} of the currently highlighted grid tile
-  currentRoomId: null, // String ID of the current room
-
-  // Global/Persistent state
-  inventory: {}, // Map: definitionId -> quantity
-  myAvatarId: null, // String runtime ID of the player's avatar
-  myCurrency: 0,
+// Represents the camera's position (pan) and zoom level.
+export const camera = {
+  x: 0, // Horizontal pan offset (screen pixels)
+  y: 0, // Vertical pan offset (screen pixels)
+  zoom: 1.0, // Zoom multiplier (1.0 = default)
 };
 
+// Holds the core game data received from the server or managed client-side.
+export const gameState = {
+  // --- Room Specific State ---
+  currentRoomId: null, // String ID of the currently loaded room
+  roomLayout: [], // 2D array representing the room's tile layout (e.g., [[0, 1], [0, 0]])
+  roomCols: 0, // Number of columns in the current room layout
+  roomRows: 0, // Number of rows in the current room layout
+  clientTiles: [], // Array of ClientTile instances representing the room floor/walls
+  furniture: {}, // Map: furnitureDbId (string) -> ClientFurniture instance
+  avatars: {}, // Map: avatarRuntimeId (string) -> ClientAvatar instance
+  highlightedTile: null, // {x, y} world coordinates of the tile currently under the mouse, if valid
+
+  // --- Player Specific State (Synced with Server) ---
+  myAvatarId: null, // String runtime ID of the player's own avatar
+  myUserId: null, // String persistent database ID (_id) of the logged-in user
+  myCurrency: 0, // Player's current amount of Silly Coins
+  inventory: {}, // Map: definitionId (string) -> quantity (number)
+};
+
+// Holds references to UI DOM elements and flags related to UI state.
 export const uiState = {
-  // DOM Element References (populated by uiManager.js)
+  // --- DOM Element References (Populated by uiManager.js) ---
+  // Core Rendering & Containers
   canvas: null,
-  ctx: null,
-  gameContainer: null,
-  debugDiv: null,
-  chatInput: null,
-  chatLogDiv: null,
-  bubbleContainer: null,
-  inventoryItemsDiv: null,
-  pickupFurniBtn: null,
-  recolorFurniBtn: null,
-  currencyDisplay: null,
+  ctx: null, // Canvas 2D rendering context
+  gameContainer: null, // Div containing the canvas and overlays
+  bubbleContainer: null, // Div specifically for chat bubbles overlaying the canvas
+
+  // Loading Overlay
+  loadingOverlay: null,
+  loadingMessage: null,
+
+  // Header
   roomNameDisplay: null,
+  currencyDisplay: null,
+  logoutBtn: null,
+
+  // Chat Area
+  chatArea: null, // Main container for chat log and input
+  chatLogDiv: null, // The scrollable div holding chat messages
+  chatInput: null, // The text input field for chat
+
+  // Bottom Bar
+  bottomBar: null,
+  toggleInventoryBtn: null,
+  toggleRoomsBtn: null,
+  toggleUsersBtn: null,
+  toggleShopBtn: null,
+  toggleEditBottomBtn: null, // Renamed edit toggle button
+  toggleAdminBtn: null,
+  toggleDebugBtn: null,
+  // zoomInBottomBtn: null, // Optional zoom buttons
+  // zoomOutBottomBtn: null, // Optional zoom buttons
+
+  // Toggled Panels (Main container divs)
+  inventoryPanel: null,
   userListPanel: null,
-  userListContent: null,
+  roomsPanel: null,
+  adminPanel: null,
+  debugPanel: null,
+
+  // Content Elements *within* Toggled Panels
+  inventoryItemsDiv: null, // Div inside inventoryPanel for item elements
+  userListContent: null, // UL element inside userListPanel
+  roomsListContent: null, // Div/UL inside roomsPanel (assuming)
+  adminRoomListDiv: null, // Div inside adminPanel for room list
+  layoutTileTypeSelector: null, // Radio group inside adminPanel
+  debugDiv: null, // Div inside debugPanel for text content
+  createRoomBtn: null, // Button inside adminPanel
+
+  // Existing Floating Panels (Popups)
   profilePanel: null,
   profileContent: null,
   profileCloseBtn: null,
@@ -41,44 +84,49 @@ export const uiState = {
   recolorItemNameP: null,
   recolorCloseBtn: null,
   recolorResetBtn: null,
-  shopPanel: null,
-  shopItemsDiv: null,
-  shopCloseBtn: null,
-  openShopBtn: null,
-  logoutBtn: null, // Added logout button ref
-  zoomInBtn: null,
-  zoomOutBtn: null,
-  toggleEditBtn: null,
-  loadingOverlay: null,
-  loadingMessage: null,
-  createRoomBtn: null,
+  shopPanel: null, // Note: Shop is now a toggled panel, this might be redundant if refactored fully
+  shopItemsDiv: null, // Content div inside shopPanel
+  shopCloseBtn: null, // Close button for the shop panel
 
-  // UI Data / Flags
-  activeChatBubbles: [], // Stores { id, text, endTime, avatarId, element } for positioning/removal
-  chatMessages: [], // Stores chat log <p> elements for limiting count
-  nextBubbleId: 0,
-  isEditMode: false,
+  // Context Menu
+  contextMenu: null, // The main context menu div
+  contextMenuTarget: null, // Stores info about the right-clicked object { type: 'avatar'|'furniture'|'tile', id?, x?, y? }
+
+  activePanelId: null,
+
+  // --- UI Data / Flags ---
+  activeChatBubbles: [], // Array stores { id, text, endTime, avatarId, element } for positioning/removal
+  chatMessages: [], // Array stores chat log <p> elements for limiting count
+  nextBubbleId: 0, // Counter for generating unique bubble element IDs
+  isEditMode: false, // Boolean flag indicating if edit mode is active
   editMode: {
-    state: "navigate", // Default state
-    selectedInventoryItemId: null, // definitionId string
-    selectedFurnitureId: null, // furniture DB ID string
-    placementValid: false,
-    placementRotation: 0, // Direction (0-7)
+    // State specific to edit mode interactions
+    state: "navigate", // Current sub-state ('navigate', 'placing', 'selected_furni')
+    selectedInventoryItemId: null, // definitionId string of item selected from inventory for placing
+    selectedFurnitureId: null, // furniture DB ID string of item selected on the floor
+    placementValid: false, // Boolean indicating if current placement location is valid
+    placementRotation: 0, // Direction (0-7) for placement ghost/request
   },
-  activeRecolorFurniId: null, // furniture DB ID string
+  activeRecolorFurniId: null, // furniture DB ID string of the item currently being recolored
 };
 
-// Input state is managed within inputHandler.js
-// export const inputState = { ... };
-
-/** Initializes default values based on config (call after config loaded). */
+/**
+ * Initializes default values for gameState and uiState based on config.
+ * Called once after configuration is loaded in main.js.
+ * @param {object} clientConfig - The loaded CLIENT_CONFIG object.
+ */
 export function initializeGameState(clientConfig) {
+  // Set default edit mode state using the constant from config
   if (clientConfig?.EDIT_STATE_NAVIGATE) {
     uiState.editMode.state = clientConfig.EDIT_STATE_NAVIGATE;
   } else {
     console.warn(
-      "CLIENT_CONFIG not available during gameState initialization, using default edit state."
+      "CLIENT_CONFIG not available during gameState initialization, using default edit state 'navigate'."
     );
-    uiState.editMode.state = "navigate"; // Fallback
+    uiState.editMode.state = "navigate"; // Fallback if config constant is missing
   }
+
+  // Initialize other states if needed based on config defaults
+  // Example:
+  // gameState.myCurrency = clientConfig?.STARTING_CURRENCY || 0;
 }

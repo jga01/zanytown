@@ -1,3 +1,9 @@
+/**
+ * public/style.css
+ *
+ * Stylesheet for ZanyTown UI Overhaul
+ */
+
 /* --- ZanyTown Theme --- */
 @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Quicksand:wght@400;600&display=swap');
 
@@ -11,15 +17,17 @@
 :root {
     /* Define Zany color palette */
     --bg-main: #f0faff; /* Very Light Blue */
-    --bg-panel: rgba(255, 240, 245, 0.95); /* Lavender Blush */
+    --bg-panel: rgba(255, 240, 245, 0.98); /* Lavender Blush, slightly less transparent */
     --bg-panel-header: rgba(255, 228, 185, 0.98); /* Peach Puff */
     --bg-input: #ffffff;
     --bg-item: rgba(173, 216, 230, 0.8); /* Light Blue */
     --bg-item-hover: rgba(144, 238, 144, 0.9); /* Light Green */
+    --bg-canvas: #003366; /* Dark blue background for canvas area */
     --border-color: #ff7f50; /* Coral */
     --border-dashed-color: #ff69b4; /* Hot Pink */
     --text-primary: #3d3d3d; /* Dark Gray */
     --text-secondary: #7a7a7a; /* Medium Gray */
+    --text-darker: #1a1a1a;
     --text-highlight: #ff4500; /* OrangeRed */
     --text-gold: #b8860b; /* DarkGoldenrod */
     --text-error: #dc143c; /* Crimson */
@@ -37,6 +45,9 @@
     --accent-color-purple-dark: #8a2be2; /* Blue Violet */
     --accent-color-blue: #87cefa; /* Light Sky Blue */
     --accent-color-blue-dark: #00bfff; /* Deep Sky Blue */
+    --context-menu-bg: #fff8dc; /* Cornsilk */
+    --context-menu-border: #daa520; /* Goldenrod */
+    --context-menu-hover-bg: #f0e68c; /* Khaki */
 
     /* Define Zany fonts & spacing */
     --font-main: 'Quicksand', Verdana, sans-serif; /* Friendly sans-serif */
@@ -44,10 +55,17 @@
     --font-mono: monospace;
     --base-font-size: 14px; /* Slightly larger base */
     --panel-padding: 12px;
-    --panel-radius: 15px; /* More rounded */
+    --panel-radius: 12px; /* Consistent radius */
+    --bottom-bar-height: 55px; /* Height of the new bottom bar */
+    --header-height: 50px; /* Approximate height of the header */
     --scrollbar-track: #fde0e0; /* Light pinkish track */
     --scrollbar-thumb: #fab1a0; /* Light Salmon thumb */
     --scrollbar-thumb-hover: #ff7f50; /* Coral hover */
+
+    /* Panel Variables (shared) */
+    --panel-bg: rgba(255, 240, 245, 0.98); /* Lavender Blush default for toggle panels */
+    --panel-border: var(--accent-color); /* Hot pink default border for toggle panels */
+    --panel-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
 }
 
 body {
@@ -78,6 +96,7 @@ body {
     flex-shrink: 0;
     gap: 20px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    height: var(--header-height); /* Use variable */
 }
 
 #main-header h1 {
@@ -87,10 +106,11 @@ body {
     margin-right: auto; /* Push other items to the right */
     letter-spacing: 1px;
     text-shadow: 1px 1px 1px rgba(0,0,0,0.1);
+    white-space: nowrap;
 }
 
 .header-info {
-    font-weight: 600; /* Use Quicksand bold weight */
+    font-weight: 600;
     white-space: nowrap;
     background-color: rgba(255, 255, 255, 0.7);
     padding: 5px 10px;
@@ -100,48 +120,28 @@ body {
 #player-currency { color: var(--text-gold); border: 1px solid var(--text-gold);}
 
 #main-content {
-    display: flex;
+    display: flex; /* Use flex for main area */
     flex-grow: 1; /* Take remaining vertical space */
     overflow: hidden; /* Prevent content overflow */
+    position: relative; /* Needed for positioning panels over the game world */
 }
 
-.sidebar {
-    width: 240px; /* Slightly wider sidebar */
-    padding: 15px;
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-    overflow-y: auto;
-    flex-shrink: 0;
-    background: linear-gradient(135deg, #e0f7fa, #ffebee); /* Light gradient */
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-    border-color: var(--border-color);
-    border-style: solid;
-    border-width: 0;
-}
-.sidebar::-webkit-scrollbar { width: 10px; }
-.sidebar::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
-.sidebar::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; border: 1px solid #f7c1ae; }
-.sidebar::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
-
-#left-sidebar { border-right-width: 2px; }
-#right-sidebar { border-left-width: 2px; }
-
+/* Game world takes all available space in main-content */
 #game-world {
-    flex-grow: 1; /* Take remaining horizontal space */
+    flex-grow: 1;
     display: flex;
     flex-direction: column; /* Stack canvas and chat */
-    position: relative; /* For absolutely positioned overlay panels */
+    position: relative; /* For absolutely positioned overlay panels within it */
     overflow: hidden; /* Clip canvas if needed */
     background-color: #d4f0f0; /* Light cyan-ish background */
+    height: 100%; /* Ensure it fills main-content height */
 }
 
 #game-container {
     position: relative; /* Needed for absolute positioning of canvas overlays */
     width: 100%;
     flex-grow: 1; /* Canvas container takes most space */
-    background-color: #d4f0f0; /* Match game-world */
+    background-color: var(--bg-canvas); /* Use variable */
     cursor: grab; /* Default cursor indicating pannable map */
     overflow: hidden;
 }
@@ -150,29 +150,103 @@ body {
     display: block;
     width: 100%;
     height: 100%;
-    /* Background set in JS clear or container */
+    /* Background set via #game-container or JS clear */
 }
 
-/* --- UI Panel Base (Sidebar Version) --- */
+/* --- Bottom Bar --- */
+#bottom-bar {
+    height: var(--bottom-bar-height);
+    background: linear-gradient(to top, #ffccdd, #ffe0e5); /* Pink gradient */
+    border-top: 3px solid var(--accent-color);
+    flex-shrink: 0; /* Prevent shrinking */
+    display: flex;
+    align-items: center;
+    justify-content: center; /* Center icons horizontally */
+    padding: 0 15px;
+    gap: 10px; /* Space between icons */
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.15);
+    z-index: 500; /* Above canvas, below panels */
+}
+
+.bottom-bar-btn {
+    background-color: rgba(255, 255, 255, 0.7);
+    border: 2px solid var(--accent-color-dark);
+    color: var(--accent-color-dark);
+    border-radius: 10px;
+    padding: 5px 8px; /* Smaller padding */
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column; /* Stack icon and label */
+    align-items: center;
+    justify-content: center;
+    min-width: 50px; /* Minimum width */
+    height: calc(var(--bottom-bar-height) - 14px); /* Fit within bar */
+    transition: background-color 0.2s, transform 0.1s;
+    box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+    white-space: nowrap; /* Prevent label wrapping */
+}
+.bottom-bar-btn:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.9);
+    transform: translateY(-2px);
+}
+.bottom-bar-btn:active:not(:disabled) {
+    transform: translateY(0px);
+    background-color: rgba(255, 228, 235, 0.9);
+}
+.bottom-bar-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    filter: grayscale(1);
+    transform: none; /* Disable hover/active transforms */
+    box-shadow: none;
+}
+.bottom-bar-btn.active { /* Style for active toggle buttons */
+    background-color: var(--accent-color-green);
+    color: white;
+    border-color: var(--accent-color-green-dark);
+}
+
+.bottom-bar-btn .icon {
+    font-size: 1.4em; /* Adjust icon size */
+    line-height: 1;
+}
+.bottom-bar-btn .label {
+    font-size: 0.7em;
+    margin-top: 2px;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+/* Style specific bottom bar buttons when active */
+#toggle-edit-bottom-btn.active {
+    background-color: var(--accent-color-orange);
+    color: black;
+    border-color: var(--accent-color-orange-dark);
+}
+
+/* --- UI Panel Base (For Toggled Panels mainly) --- */
 .ui-panel {
     background-color: var(--bg-panel);
-    border: 2px solid var(--border-color);
+    border: 3px solid var(--panel-border); /* Use specific panel border */
     border-radius: var(--panel-radius);
     padding: var(--panel-padding);
     color: var(--text-primary);
     font-size: var(--base-font-size);
-    box-shadow: 3px 3px 8px rgba(0, 0, 0, 0.15);
-    /* Subtle noise texture */
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23ff7f50' fill-opacity='0.1' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
+    box-shadow: var(--panel-shadow);
+    /* Subtle noise texture option */
+    /* background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23ff7f50' fill-opacity='0.1' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E"); */
 }
 
-.panel-column { /* For panels stacked vertically in sidebars */
+.panel-column { /* For panels stacked vertically */
     display: flex;
     flex-direction: column;
 }
 
+/* Shared Header style for panels */
 .ui-panel h4 {
-    margin: 0 0 10px 0;
+    margin: 0 0 10px 0; /* Adjust top margin if using close button space */
     padding-bottom: 8px;
     text-align: center;
     color: var(--text-highlight);
@@ -183,17 +257,89 @@ body {
     letter-spacing: 1px;
 }
 
-/* --- Floating Panels (Over Canvas) --- */
+/* Close button for panels */
+.close-btn, .close-panel-btn {
+    position: absolute;
+    top: 5px; right: 5px;
+    background-color: var(--accent-color-red);
+    color: white;
+    border: 1px solid var(--accent-color-red-dark);
+    border-radius: 50%;
+    width: 24px; height: 24px;
+    line-height: 22px; /* Adjust for centering text/icon */
+    text-align: center;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 13px;
+    padding: 0;
+    z-index: 10; /* Above panel content */
+    transition: background-color 0.15s ease, transform 0.1s ease;
+}
+.close-btn:hover, .close-panel-btn:hover {
+    background-color: var(--accent-color-red-dark);
+    transform: scale(1.1) rotate(90deg);
+}
+
+
+/* --- Toggled Panel Styles --- */
+.toggle-panel {
+    position: absolute; /* Position relative to #game-container */
+    top: 10px; /* Position from top */
+    width: 340px; /* Wider panels */
+    max-height: calc(100% - 20px); /* Max height, leave space */
+    background-color: var(--panel-bg); /* Use variable */
+    border: 3px solid var(--panel-border); /* Use variable */
+    border-radius: var(--panel-radius);
+    box-shadow: var(--panel-shadow); /* Use variable */
+    z-index: 600; /* Above bottom bar, below floating */
+    display: none; /* Hidden by default, controlled by JS */
+    flex-direction: column; /* Ensure panel structure works */
+    padding-top: 35px; /* Space for close button */
+}
+.toggle-panel.left { left: 10px; }
+.toggle-panel.right { right: 10px; }
+
+/* Specific panel borders/backgrounds if desired */
+#inventory-panel { border-color: var(--accent-color-blue); background-color: rgba(224, 242, 254, 0.98); }
+#user-list-panel { border-color: var(--accent-color-green); background-color: rgba(232, 255, 232, 0.98); }
+#rooms-panel { border-color: var(--accent-color-orange); background-color: rgba(255, 240, 224, 0.98); }
+#admin-panel { border-color: var(--text-highlight); background-color: rgba(255, 224, 180, 0.98); }
+#debug-panel { border-color: #aaa; background-color: rgba(240, 240, 240, 0.98); }
+#shop-panel {
+    border-color: var(--accent-color-purple); /* Use purple border */
+    background-color: rgba(230, 230, 250, 0.98); /* Lavender background */
+}
+
+/* Scrollable content area within toggled panels */
+.panel-content-scrollable {
+    flex-grow: 1; /* Take available space */
+    overflow-y: auto; /* Enable vertical scroll */
+    overflow-x: hidden; /* Prevent horizontal scroll */
+    padding: 0 10px 10px 10px; /* Padding inside scroll area */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+.panel-content-scrollable::-webkit-scrollbar { width: 10px; }
+.panel-content-scrollable::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
+.panel-content-scrollable::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; border: 1px solid #f7c1ae; }
+.panel-content-scrollable::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
+
+
+/* --- Floating Panels (Profile, Recolor) --- */
 .floating-panel {
     position: absolute; /* Position relative to #game-container */
-    z-index: 200;
+    z-index: 700; /* Ensure they are above toggled panels */
     max-width: 320px; /* Limit width */
     max-height: 80%; /* Limit height */
     overflow-y: auto;
     border-width: 3px; /* Thicker border */
     border-style: double; /* Double border */
-    border-color: var(--accent-color-purple);
+    border-color: var(--accent-color-purple); /* Default border */
     background-color: rgba(230, 230, 250, 0.97); /* Lavender background */
+    padding: var(--panel-padding);
+    padding-top: 35px; /* Space for close button */
+    border-radius: var(--panel-radius);
+    box-shadow: var(--panel-shadow);
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
@@ -202,54 +348,72 @@ body {
 .floating-panel::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; }
 .floating-panel::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
 
-#profile-panel {
-    top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 300px;
-}
-#recolor-panel {
-    top: 15px; right: 15px;
-    width: 200px;
-    border-color: var(--accent-color-green);
-}
-#shop-panel {
-    top: 15px; left: 15px;
-    width: 280px;
-    border-color: var(--accent-color-blue-dark);
+/* Specific floating panel positioning and borders */
+#profile-panel { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 300px; }
+#recolor-panel { top: 15px; right: 15px; width: 200px; border-color: var(--accent-color-green); }
+
+/* Headers inside floating panels */
+.floating-panel h4 {
+    margin: 0 0 10px 0;
+    padding-bottom: 8px;
+    text-align: center;
+    color: var(--text-highlight);
+    font-family: var(--font-header);
+    font-size: 1.3em;
+    border-bottom: 2px dashed var(--border-dashed-color);
+    flex-shrink: 0;
+    letter-spacing: 1px;
 }
 
-/* --- Debug Panel --- */
-#coords-debug {
-    min-height: 150px; /* Example minimum height */
-    border-color: var(--text-secondary);
-    background-color: rgba(240, 240, 240, 0.9);
+/* --- Context Menu --- */
+#context-menu {
+    position: absolute;
+    background-color: var(--context-menu-bg);
+    border: 2px solid var(--context-menu-border);
+    border-radius: 8px;
+    box-shadow: 3px 3px 8px rgba(0,0,0,0.2);
+    padding: 5px 0;
+    z-index: 1000; /* Highest */
+    min-width: 150px;
+    display: none; /* Hidden by default */
 }
-#coords-debug h4 { font-size: 1.1em; margin-bottom: 6px; color: #555; border-color: #aaa; }
-#debug-content {
-     font-family: var(--font-mono);
-     font-size: 11px;
-     line-height: 1.4;
-     overflow-y: auto;
-     height: 100%;
-     padding: 5px;
-     color: #333;
-     scrollbar-width: thin;
-     scrollbar-color: #ccc #eee;
+#context-menu ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
 }
-#debug-content::-webkit-scrollbar { width: 8px; }
-#debug-content::-webkit-scrollbar-track { background: #eee; border-radius: 4px; }
-#debug-content::-webkit-scrollbar-thumb { background-color: #ccc; border-radius: 4px; border: 1px solid #bbb; }
-#debug-content::-webkit-scrollbar-thumb:hover { background-color: #bbb; }
+#context-menu li {
+    padding: 8px 15px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-primary);
+    transition: background-color 0.15s ease;
+    white-space: nowrap;
+}
+#context-menu li:hover {
+    background-color: var(--context-menu-hover-bg);
+    color: black;
+}
+#context-menu li.disabled {
+    color: #999;
+    cursor: not-allowed;
+    background-color: transparent !important; /* Ensure no hover effect */
+}
+#context-menu li.separator {
+    height: 1px;
+    background-color: var(--context-menu-border);
+    margin: 4px 0;
+    padding: 0;
+    cursor: default;
+}
 
-/* --- Chat Area (Below Canvas) --- */
+/* --- Chat Area --- */
 #chat-area {
-    height: 200px; /* Slightly taller */
+    height: 200px; /* Adjust as needed */
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    border: none; /* Remove panel border */
-    background: transparent; /* No background */
-    box-shadow: none;
-    padding: 0 10px 10px 10px; /* Padding around chat log/input */
+    padding: 0 10px 10px 10px; /* Padding from game-world */
 }
 
 #chat-log {
@@ -258,14 +422,14 @@ body {
     margin-bottom: 10px;
     border: 2px solid var(--accent-color-blue);
     padding: 8px 10px;
-    background-color: rgba(255, 255, 255, 0.9); /* Whiteish background */
+    background-color: rgba(255, 255, 255, 0.9);
     border-radius: 10px;
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 #chat-log::-webkit-scrollbar { width: 10px; }
 #chat-log::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
-#chat-log::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; border: 1px solid #f7c1ae;}
+#chat-log::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; border: 1px solid #f7c1ae; }
 #chat-log::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
 
 #chat-log p {
@@ -279,7 +443,6 @@ body {
 #chat-log p.error-msg { color: var(--text-error); font-weight: 600; }
 #chat-log p.server-msg { color: var(--accent-color-purple); font-weight: 600; }
 #chat-log p.self-msg { color: var(--text-success); font-weight: 600; }
-/* Ensure admin-msg style exists */
 #chat-log p.admin-msg { color: var(--text-highlight); font-weight: 600; font-family: var(--font-header);}
 #chat-log p.announcement-msg {
     color: #ff1493; /* Deep Pink */
@@ -306,27 +469,14 @@ body {
 }
 #chat-input:focus { outline: none; border-color: var(--accent-color-dark); box-shadow: 0 0 5px var(--accent-color); }
 
-/* --- Inventory Panel --- */
-#inventory-panel {
-    flex-grow: 1;
-    min-height: 150px;
-}
+/* --- Content within Panels --- */
 
+/* Inventory Items (inside #inventory-panel .panel-content-scrollable) */
 #inventory-items {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    flex-grow: 1;
-    overflow-y: auto;
-    padding-right: 6px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
-#inventory-items::-webkit-scrollbar { width: 10px; }
-#inventory-items::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
-#inventory-items::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; }
-#inventory-items::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
-
 .inventory-item {
     padding: 8px 12px;
     border: 2px solid var(--accent-color-blue);
@@ -337,11 +487,10 @@ body {
     align-items: center;
     transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
     flex-shrink: 0;
-    font-size: 13px;
+    font-size: 14px;
+    color: var(--text-darker);
     line-height: 1.3;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible; /* Allow wrapping */
     box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
 }
 .inventory-item:hover {
@@ -358,10 +507,213 @@ body {
     transform: scale(1.02);
 }
 
-.item-preview { /* Used in Inventory & Shop */
+/* User List (inside #user-list-panel .panel-content-scrollable) */
+#user-list-content {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+#user-list-content li {
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+    border-bottom: 1px solid rgba(255, 127, 80, 0.2); /* Light coral border */
+}
+#user-list-content li:last-child { border-bottom: none; }
+#user-list-content li:hover { background-color: rgba(255, 127, 80, 0.2); color: var(--text-highlight); transform: translateX(2px);}
+#user-list-content li.self-user { font-weight: 600; color: var(--text-gold); background-color: rgba(255, 235, 150, 0.3); border-left: 4px solid var(--text-gold); }
+#user-list-content li i { color: var(--text-secondary); }
+
+/* Rooms List (inside #rooms-panel .panel-content-scrollable) */
+#rooms-list-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px; /* Space between room items */
+}
+
+.room-list-item {
+    display: flex;
+    justify-content: space-between; /* Space out name and count */
+    align-items: center;
+    padding: 10px 12px;
+    border: 2px solid var(--accent-color-orange); /* Orange border to match panel */
+    border-radius: 10px;
+    background-color: rgba(255, 240, 224, 0.8); /* Light orange background */
+    cursor: pointer;
+    transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
+    font-size: 14px;
+    color: var(--text-darker);
+    box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+}
+
+.room-list-item:hover {
+    background-color: rgba(255, 224, 190, 0.9); /* Darker orange on hover */
+    border-color: var(--accent-color-orange-dark);
+    transform: translateX(3px);
+}
+
+.room-list-item.current-room {
+    background-color: rgba(255, 245, 180, 0.9); /* Light yellow for current room */
+    border-color: var(--text-gold);
+    cursor: default; /* Not clickable */
+    font-weight: 600;
+    transform: none; /* No hover transform */
+}
+.room-list-item.current-room:hover {
+     background-color: rgba(255, 245, 180, 0.9); /* No hover color change */
+}
+
+
+.room-name {
+    font-weight: 600;
+    flex-grow: 1; /* Allow name to take space */
+    margin-right: 10px; /* Space before count */
+    overflow: hidden; /* Ellipsis if too long */
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.room-player-count {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    white-space: nowrap; /* Prevent count wrapping */
+    background-color: rgba(0,0,0,0.05);
+    padding: 2px 6px;
+    border-radius: 5px;
+}
+
+
+/* Admin Panel Content (inside #admin-panel .panel-content-scrollable) */
+.admin-section {
+    margin-top: 15px;
+    border-top: 2px dashed rgba(220, 20, 60, 0.4); /* Crimson dashed */
+    padding-top: 10px;
+}
+.admin-section h5 {
+    margin-bottom: 8px;
+    font-size: 1em;
+    color: #663300; /* Brownish */
+    font-weight: 600;
+}
+#admin-panel button { /* Styles for buttons inside admin panel */
+     background-color: var(--accent-color-orange);
+     border-color: var(--accent-color-orange-dark);
+     color: black;
+     margin-bottom: 8px; /* Add some space below buttons */
+     width: 100%; /* Make buttons full width */
+}
+ #admin-panel button:hover:not(:disabled) {
+     background-color: var(--accent-color-orange-dark);
+ }
+.admin-list-box {
+    max-height: 120px; /* Limit height */
+    overflow-y: auto;
+    background: rgba(255, 255, 255, 0.7);
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--accent-color-orange-dark);
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+.admin-list-box::-webkit-scrollbar { width: 8px; }
+.admin-list-box::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 3px; }
+.admin-list-box::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 3px; }
+.admin-list-box ul { list-style: none; padding: 0; margin: 0; }
+.admin-list-box li {
+    padding: 4px 6px; font-size: 0.9em; border-bottom: 1px dotted #ccc;
+    cursor: pointer; transition: background-color 0.15s ease;
+}
+.admin-list-box li:last-child { border-bottom: none; }
+.admin-list-box li:hover { background-color: var(--accent-color-blue); color: white; }
+.admin-list-box i { color: var(--text-secondary); } /* Italic loading text */
+.admin-radio-group {
+    display: flex; flex-wrap: wrap; gap: 5px 15px; /* Row gap, Column gap */
+    font-size: 0.9em; margin-bottom: 5px;
+}
+.admin-radio-group label { display: inline-flex; align-items: center; cursor: pointer; }
+.admin-radio-group input[type="radio"] { margin-right: 5px; cursor: pointer; }
+.admin-instruction { font-size: 0.85em; margin-top: 8px; color: var(--text-secondary); font-style: italic; }
+
+/* Debug Content (inside #debug-panel .panel-content-scrollable) */
+#debug-content {
+     font-family: var(--font-mono); font-size: 11px; line-height: 1.4;
+     color: #333; padding: 5px;
+     word-break: break-all; /* Allow breaking long lines */
+     white-space: pre-wrap; /* Preserve line breaks from JS */
+}
+
+/* Shop Items (inside #shop-panel .panel-content-scrollable) */
+#shop-items {
+    display: flex; flex-direction: column; gap: 10px;
+}
+.shop-item {
+    background-color: rgba(240, 255, 240, 0.9); /* Honeydew */
+    border: 2px solid var(--accent-color-green); border-radius: 10px;
+    padding: 10px 12px; display: flex; align-items: center;
+    justify-content: space-between; gap: 12px; flex-shrink: 0;
+    box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+}
+.shop-item-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    color: var(--text-darker);
+    font-weight: 600;
+    flex-grow: 1; /* Allow info section to grow */
+    flex-shrink: 1; /* Allow info section to shrink if needed */
+    overflow: hidden; /* Needed for inner elements */
+    min-width: 0; /* Important for flex shrinking */
+}
+.shop-item-name {
+    overflow: visible; /* Allow wrapping */
+    word-break: break-word; /* Help wrapping long words */
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+.shop-item-price { font-weight: 600; color: var(--text-gold); background-color: rgba(184, 134, 11, 0.1); padding: 3px 6px; border-radius: 5px; white-space: nowrap; flex-shrink: 0; }
+.shop-item button.buy-btn { background-color: var(--accent-color-orange); border-color: var(--accent-color-orange-dark); color: white; font-size: 12px; padding: 6px 12px; flex-shrink: 0; font-weight: 600; }
+.shop-item button.buy-btn:hover:not(:disabled) { background-color: var(--accent-color-orange-dark); }
+.shop-item button.buy-btn.cannot-afford { filter: grayscale(0.8); opacity: 0.7; }
+
+/* Content for floating panels (Profile, Recolor) */
+#profile-panel p { margin: 10px 0; font-size: inherit; display: flex; align-items: center; line-height: 1.5; }
+.profile-color-swatch { display: inline-block; width: 20px; height: 20px; border: 2px solid black; margin-right: 10px; margin-left: 6px; vertical-align: middle; flex-shrink: 0; border-radius: 5px;}
+.profile-actions { margin-top: 18px; text-align: center; }
+
+#recolor-panel p { color: #555; font-weight: 600;}
+#recolor-swatches {
+    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+    margin-bottom: 15px; max-height: 180px; overflow-y: auto;
+    padding: 10px; background-color: rgba(200, 255, 200, 0.5);
+    border-radius: 8px; scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+#recolor-swatches::-webkit-scrollbar { width: 8px; }
+#recolor-swatches::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px; }
+#recolor-swatches::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 4px; }
+.recolor-swatch {
+    width: 32px; height: 32px; border: 3px solid #888; cursor: pointer;
+    border-radius: 8px; display: inline-block; transition: border-color 0.2s ease, transform 0.15s ease;
+    box-shadow: 1px 1px 3px rgba(0,0,0,0.2);
+}
+.recolor-swatch:hover { border-color: var(--text-highlight); transform: scale(1.15) rotate(5deg); }
+#recolor-reset-btn { display: block; width: 100%; margin-top: 10px; background-color: #aaa; border-color: #888; color: #444; }
+#recolor-reset-btn:hover:not(:disabled) { background-color: #bbb; }
+
+
+/* --- General UI Elements --- */
+
+/* Item Preview used in Inventory and Shop */
+.item-preview {
     display: inline-block;
-    width: 24px;
-    height: 24px;
+    width: 24px; height: 24px;
     border: 2px solid #777;
     margin-right: 10px;
     vertical-align: middle;
@@ -370,23 +722,7 @@ body {
     box-shadow: inset 1px 1px 2px rgba(0,0,0,0.2);
 }
 
-.inventory-actions {
-    margin-top: 12px;
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    flex-shrink: 0;
-    border-top: 2px dashed rgba(255, 127, 80, 0.5); /* Coral dashed */
-    padding-top: 10px;
-}
-
-/* --- Room Controls (Sidebar) --- */
-#room-controls {
-    gap: 10px;
-}
-#room-controls button { width: 100%; }
-
-/* --- General Button Styles --- */
+/* General Button Styles (used if not overridden by specific button styles) */
 button {
     padding: 10px 15px;
     background-color: var(--accent-color-blue);
@@ -421,318 +757,18 @@ button:disabled {
     text-shadow: none;
     filter: grayscale(0.5);
 }
-
-/* Specific Button Styles (Using Zany Accents) */
-#logout-btn { background-color: var(--accent-color-red); border-color: var(--accent-color-red-dark); color: white; margin-left: auto; }
+/* Specific button overrides (like logout) */
+#logout-btn { background-color: var(--accent-color-red); border-color: var(--accent-color-red-dark); color: white; margin-left: auto; /* Keep pushed right */ }
 #logout-btn:hover:not(:disabled) { background-color: var(--accent-color-red-dark); }
 
-#toggle-edit-btn { background-color: var(--accent-color-green); border-color: var(--accent-color-green-dark); color: white; font-family: var(--font-header); }
-#toggle-edit-btn:hover:not(:disabled) { background-color: var(--accent-color-green-dark); }
-#toggle-edit-btn.active {
-    background-color: var(--accent-color-orange);
-    border-color: var(--accent-color-orange-dark);
-    color: black;
-}
-#toggle-edit-btn.active:hover:not(:disabled) { background-color: var(--accent-color-orange-dark); }
 
-#pickup-furni-btn { background-color: var(--accent-color-red); border-color: var(--accent-color-red-dark); color: white; flex-grow: 1; }
-#pickup-furni-btn:hover:not(:disabled) { background-color: var(--accent-color-red-dark); }
+/* --- Visual Feedback --- */
 
-#recolor-furni-btn { background-color: var(--accent-color-purple); border-color: var(--accent-color-purple-dark); color: white; flex-grow: 1; }
-#recolor-furni-btn:hover:not(:disabled) { background-color: var(--accent-color-purple-dark); }
-
-#open-shop-btn { background-color: var(--accent-color); border-color: var(--accent-color-dark); color: white; }
-#open-shop-btn:hover:not(:disabled) { background-color: var(--accent-color-dark); }
-
-.close-btn {
-    position: absolute;
-    top: 8px; right: 8px;
-    background-color: var(--accent-color-red);
-    color: white;
-    border: 2px solid var(--accent-color-red-dark);
-    border-radius: 50%;
-    width: 28px; height: 28px;
-    line-height: 24px; /* Adjust for centering */
-    text-align: center;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 14px;
-    padding: 0;
-    transition: background-color 0.15s ease, transform 0.1s ease;
-    z-index: 10;
-}
-.close-btn:hover { background-color: var(--accent-color-red-dark); transform: scale(1.1) rotate(90deg); }
-
-/* --- Chat Bubbles --- */
-#chat-bubbles-container {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    overflow: hidden;
-    z-index: 100;
-}
-
-.chat-bubble {
-    position: absolute;
-    background-color: rgba(255, 255, 153, 0.95); /* Light Yellow */
-    color: #555;
-    padding: 6px 12px;
-    border-radius: 20px 20px 20px 5px; /* Speech bubble shape */
-    border: 2px solid #ffcc00; /* Gold border */
-    font-size: 13px;
-    font-weight: 600;
-    max-width: 200px;
-    word-wrap: break-word;
-    text-align: center;
-    box-shadow: 2px 3px 6px rgba(0, 0, 0, 0.2);
-    transform: translate(-50%, -100%); /* Position above anchor point */
-    transition: opacity 0.2s ease-out;
-    /* No pointer needed for this shape */
-}
-
-/* --- Cursor Styles --- */
+/* Cursor Styles */
 .dragging { cursor: grabbing !important; }
 .edit-mode-cursor { cursor: crosshair !important; }
 
-/* --- User List Panel --- */
-#user-list-panel {
-    flex-grow: 1;
-    min-height: 100px;
-}
-#user-list-content {
-    list-style-type: none;
-    padding: 0;
-    margin: 0;
-    flex-grow: 1;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-}
-#user-list-content::-webkit-scrollbar { width: 8px; }
-#user-list-content::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px; }
-#user-list-content::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 4px; }
-#user-list-content::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
-
-#user-list-content li {
-    padding: 6px 10px;
-    font-size: 13px;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
-    border-bottom: 1px solid rgba(255, 127, 80, 0.2); /* Light coral border */
-}
-#user-list-content li:last-child { border-bottom: none; }
-#user-list-content li:hover { background-color: rgba(255, 127, 80, 0.2); color: var(--text-highlight); transform: translateX(2px);}
-#user-list-content li.self-user { font-weight: 600; color: var(--text-gold); background-color: rgba(255, 235, 150, 0.3); border-left: 4px solid var(--text-gold); }
-#user-list-content li i { color: var(--text-secondary); }
-
-/* --- Profile Panel (Floating) --- */
-#profile-panel h4 { color: var(--accent-color-purple-dark); font-size: 1.4em; }
-#profile-panel p { margin: 10px 0; font-size: inherit; display: flex; align-items: center; line-height: 1.5; }
-.profile-color-swatch { display: inline-block; width: 20px; height: 20px; border: 2px solid black; margin-right: 10px; margin-left: 6px; vertical-align: middle; flex-shrink: 0; border-radius: 5px;}
-.profile-actions { margin-top: 18px; text-align: center; }
-
-/* --- Recolor Panel (Floating) --- */
-#recolor-panel h4 { color: var(--accent-color-green-dark); }
-#recolor-panel p { color: #555; font-weight: 600;}
-#recolor-swatches {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-bottom: 15px;
-    max-height: 180px;
-    overflow-y: auto;
-    padding: 10px;
-    background-color: rgba(200, 255, 200, 0.5); /* Light green background */
-    border-radius: 8px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-}
-#recolor-swatches::-webkit-scrollbar { width: 8px; }
-#recolor-swatches::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px; }
-#recolor-swatches::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 4px; }
-
-.recolor-swatch {
-    width: 32px; height: 32px;
-    border: 3px solid #888;
-    cursor: pointer;
-    border-radius: 8px;
-    display: inline-block;
-    transition: border-color 0.2s ease, transform 0.15s ease;
-    box-shadow: 1px 1px 3px rgba(0,0,0,0.2);
-}
-.recolor-swatch:hover { border-color: var(--text-highlight); transform: scale(1.15) rotate(5deg); }
-#recolor-reset-btn { display: block; width: 100%; margin-top: 10px; background-color: #aaa; border-color: #888; color: #444; }
-#recolor-reset-btn:hover:not(:disabled) { background-color: #bbb; }
-
-/* --- Shop Panel (Floating) --- */
-#shop-panel h4 { color: var(--accent-color-blue-dark); font-size: 1.4em; }
-
-#shop-items {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    flex-grow: 1;
-    overflow-y: auto;
-    padding: 10px;
-    background-color: rgba(220, 240, 255, 0.6); /* Very light blue */
-    border-radius: 8px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-}
-#shop-items::-webkit-scrollbar { width: 10px; }
-#shop-items::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 5px; }
-#shop-items::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 5px; }
-#shop-items::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
-
-.shop-item {
-    background-color: rgba(240, 255, 240, 0.9); /* Honeydew */
-    border: 2px solid var(--accent-color-green);
-    border-radius: 10px;
-    padding: 10px 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-shrink: 0;
-    box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-}
-.shop-item-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    flex-grow: 1;
-    overflow: hidden;
-}
-.shop-item-name {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex-grow: 1;
-}
-.shop-item-price {
-    font-weight: 600;
-    color: var(--text-gold);
-    background-color: rgba(184, 134, 11, 0.1);
-    padding: 3px 6px;
-    border-radius: 5px;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-.shop-item button.buy-btn {
-    background-color: var(--accent-color-orange);
-    border-color: var(--accent-color-orange-dark);
-    color: white;
-    font-size: 12px;
-    padding: 6px 12px;
-    flex-shrink: 0;
-    font-weight: 600;
-}
-.shop-item button.buy-btn:hover:not(:disabled) { background-color: var(--accent-color-orange-dark); }
-.shop-item button.buy-btn.cannot-afford {
-    filter: grayscale(0.8);
-    opacity: 0.7;
-}
-
-/* --- START: Admin Panel Styles --- */
-#admin-controls {
-    border-color: var(--text-highlight); /* Orange border for admin */
-    background-color: rgba(255, 224, 180, 0.95); /* Light orange */
-}
-#admin-controls h4 {
-    color: var(--text-error); /* Red header */
-    border-color: var(--text-error);
-}
-#admin-controls button { /* Specific styles for buttons inside admin panel */
-     background-color: var(--accent-color-orange);
-     border-color: var(--accent-color-orange-dark);
-     color: black;
-     margin-bottom: 8px; /* Add some space below buttons */
-     width: 100%; /* Make buttons full width */
-}
- #admin-controls button:hover:not(:disabled) {
-     background-color: var(--accent-color-orange-dark);
- }
-
-/* Styles for sections within the admin panel */
-.admin-section {
-    margin-top: 15px;
-    border-top: 2px dashed rgba(220, 20, 60, 0.4); /* Crimson dashed */
-    padding-top: 10px;
-}
-.admin-section h5 {
-    margin-bottom: 8px;
-    font-size: 1em;
-    color: #663300; /* Brownish */
-    font-weight: 600;
-}
-
-/* Room List Box */
-.admin-list-box {
-    max-height: 120px; /* Limit height */
-    overflow-y: auto;
-    background: rgba(255, 255, 255, 0.7);
-    padding: 8px;
-    border-radius: 6px;
-    border: 1px solid var(--accent-color-orange-dark);
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-}
-.admin-list-box::-webkit-scrollbar { width: 8px; }
-.admin-list-box::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 3px; }
-.admin-list-box::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 3px; }
-
-.admin-list-box ul { list-style: none; padding: 0; margin: 0; }
-.admin-list-box li {
-    padding: 4px 6px;
-    font-size: 0.9em;
-    border-bottom: 1px dotted #ccc;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-}
-.admin-list-box li:last-child { border-bottom: none; }
-.admin-list-box li:hover { background-color: var(--accent-color-blue); color: white; }
-.admin-list-box i { color: var(--text-secondary); } /* Italic loading text */
-
-/* Layout Tile Type Selector */
-.admin-radio-group {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px 15px; /* Row gap, Column gap */
-    font-size: 0.9em;
-    margin-bottom: 5px;
-}
-.admin-radio-group label {
-    display: inline-flex; /* Align radio and text */
-    align-items: center;
-    cursor: pointer;
-}
-.admin-radio-group input[type="radio"] {
-    margin-right: 5px;
-    cursor: pointer;
-}
-
-/* Instruction Text */
-.admin-instruction {
-    font-size: 0.85em;
-    margin-top: 8px;
-    color: var(--text-secondary);
-    font-style: italic;
-}
-/* --- END: Admin Panel Styles --- */
-
-
-/* --- Flash Animations --- */
+/* Flash Animations */
 .flash-green { animation: flashGreen 0.6s ease-out; }
 .flash-red { animation: flashRed 0.6s ease-out; }
 
@@ -747,115 +783,112 @@ button:disabled {
 
 /* --- Loading Overlay --- */
 #loading-overlay {
-    position: fixed; /* Cover the entire viewport */
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(40, 44, 52, 0.85); /* Dark semi-transparent background */
-    display: flex; /* Use flexbox for centering */
-    justify-content: center;
-    align-items: center;
-    flex-direction: column; /* Stack message and optional spinner */
-    z-index: 1000; /* Ensure it's on top */
-    color: #e0f7fa; /* Light text color */
-    font-family: var(--font-header);
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(40, 44, 52, 0.85); /* Dark semi-transparent */
+    display: flex; justify-content: center; align-items: center;
+    flex-direction: column; z-index: 1000; /* High z-index */
+    color: #e0f7fa; font-family: var(--font-header);
     transition: opacity 0.3s ease-out; /* Smooth fade out */
-    /* Make sure it's visible initially */
-    opacity: 1;
-    pointer-events: auto;
+    opacity: 1; pointer-events: auto; /* Visible by default */
 }
-
 #loading-message {
-    font-size: 1.8em;
-    margin-bottom: 20px; /* Space below message if spinner is added */
+    font-size: 1.8em; margin-bottom: 20px;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-    padding: 10px;
-    text-align: center;
+    padding: 10px; text-align: center;
 }
-
-/* Optional Spinner Animation */
+#loading-overlay.hidden {
+    opacity: 0; pointer-events: none;
+    /* display: none will be set by JS after transition */
+}
+/* Optional Spinner */
 .spinner {
-    border: 8px solid #f3f3f3;
-    border-top: 8px solid var(--accent-color);
-    border-radius: 50%;
-    width: 60px;
-    height: 60px;
+    border: 8px solid #f3f3f3; border-top: 8px solid var(--accent-color);
+    border-radius: 50%; width: 60px; height: 60px;
     animation: spin 1s linear infinite;
 }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+/* --- Chat Bubbles --- */
+#chat-bubbles-container {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; overflow: hidden; z-index: 100; /* Above canvas */
 }
-
-/* Hide overlay using opacity and pointer-events when inactive */
-#loading-overlay.hidden {
-    opacity: 0;
-    pointer-events: none;
+.chat-bubble {
+    position: absolute;
+    background-color: rgba(255, 255, 153, 0.95); /* Light Yellow */
+    color: #555; padding: 6px 12px;
+    border-radius: 20px 20px 20px 5px; /* Speech bubble shape */
+    border: 2px solid #ffcc00; /* Gold border */
+    font-size: 13px; font-weight: 600; max-width: 200px;
+    word-wrap: break-word; text-align: center;
+    box-shadow: 2px 3px 6px rgba(0, 0, 0, 0.2);
+    transform: translate(-50%, -100%); /* Position above anchor point */
+    transition: opacity 0.2s ease-out;
+    pointer-events: none; /* Ensure bubbles don't block clicks */
 }
 
 /* --- Responsive Adjustments --- */
-@media (max-width: 1000px) {
-    .sidebar { width: 200px; }
-    :root { --base-font-size: 13px; }
-    .ui-panel h4 { font-size: 1.2em; }
-    #chat-area { height: 180px; }
-    .inventory-item, .shop-item { padding: 6px 10px; }
-    .item-preview { width: 20px; height: 20px; }
-    #main-header { padding: 6px 15px; }
-}
-
 @media (max-width: 768px) {
     #main-header h1 { font-size: 1.4em; }
-    #main-content { flex-direction: column; } /* Stack vertically */
-    .sidebar {
-        width: 100%;
-        flex-direction: row; /* Sidebars become horizontal toolbars */
-        overflow-x: auto;
-        overflow-y: hidden;
-        height: auto; /* Auto height for horizontal */
-        min-height: 120px; /* Minimum height */
-        padding: 8px;
-        border: none;
-        border-top: 2px solid var(--border-color);
-        border-bottom: 2px solid var(--border-color);
-        gap: 8px;
-        background: linear-gradient(90deg, #e0f7fa, #ffebee); /* Horizontal gradient */
+    #main-content {
+        /* Ensure main content fills space between header and bottom bar */
+        height: calc(100vh - var(--header-height) - var(--bottom-bar-height));
     }
-    .sidebar .ui-panel { /* Panels inside horizontal sidebar */
-       width: 180px; /* Adjust width for horizontal items */
-       flex-shrink: 0;
-       /* height: 110px; Example height */
-       height: 100%; /* Let panel fill sidebar height */
-       overflow: hidden;
-       font-size: 12px; /* Slightly smaller font in horizontal sidebar */
+    #bottom-bar {
+        justify-content: space-around; /* Space out icons better */
+        gap: 5px;
+        padding: 0 5px;
     }
-    .sidebar .panel-column { height: 100%; } /* Ensure vertical panels fill */
-    #inventory-items, #user-list-content, #debug-content, .admin-list-box {
-        height: auto;
-        flex-grow: 1;
-        font-size: 11px; /* Smaller text in scroll boxes */
-        max-height: none; /* Remove max-height for horizontal view */
+    .bottom-bar-btn {
+        min-width: 45px;
+        padding: 4px;
+        height: calc(var(--bottom-bar-height) - 10px);
+    }
+    .bottom-bar-btn .icon { font-size: 1.2em; }
+    .bottom-bar-btn .label { display: none; } /* Hide labels on mobile */
+
+    /* Make toggled panels take more width and center them */
+    .toggle-panel {
+        width: calc(100% - 20px); /* Near full width */
+        max-width: 380px; /* Limit max width even on mobile */
+        max-height: 60%; /* Limit height more strictly */
+        left: 50%; /* Center horizontally */
+        transform: translateX(-50%);
+        top: 10px; /* Consistent top positioning */
+    }
+    /* Override specific side positioning for toggled panels */
+    .toggle-panel.left, .toggle-panel.right {
+         left: 50%; transform: translateX(-50%);
      }
-    .admin-radio-group label { font-size: 11px; } /* Smaller radio labels */
-     .admin-instruction { display: none; } /* Hide instructions on mobile */
 
-    #game-world { order: -1; } /* Move game world to top on mobile */
-    #left-sidebar { border: none; order: 1; }
-    #right-sidebar { border: none; order: 2; }
+    /* Adjust floating panels (like profile) for mobile */
+    .floating-panel {
+         left: 50%;
+         transform: translateX(-50%);
+         max-width: 90%;
+         max-height: 70%;
+     }
+    #profile-panel { transform: translate(-50%, -50%); top: 50%; } /* Keep centered */
+    #recolor-panel { top: 10px; transform: translateX(-50%); } /* Center recolor panel */
+
     #chat-area { height: 150px; padding: 0 5px 5px 5px; }
+    #chat-log p { font-size: 13px; }
+    #chat-input { padding: 8px 10px; }
 
-    /* Hide debug on small screens */
-    #coords-debug { display: none; }
+    /* Adjust font sizes within panels for mobile */
+    .ui-panel h4 { font-size: 1.2em; }
+    .inventory-item, .shop-item-info, .user-list-content li, .admin-list-box li, .room-list-item { font-size: 12px; }
+    .shop-item-price, .room-player-count { font-size: 11px; }
+    .item-preview { width: 20px; height: 20px; margin-right: 8px; }
+    .admin-radio-group label { font-size: 11px; }
+    #debug-content { font-size: 10px; }
 
     /* Loading overlay text size adjustment for mobile */
     #loading-message { font-size: 1.5em; }
 }
 
+/* Further adjustments for very small screens or landscape mobile */
 @media (max-height: 550px) and (max-width: 768px) { /* Mobile Landscape */
      #chat-area { height: 120px; }
-     .sidebar { min-height: 100px; }
-     .sidebar .ui-panel { width: 160px; }
-     .admin-radio-group { gap: 5px 10px; }
+     .toggle-panel { max-height: calc(100% - var(--bottom-bar-height) - 20px); } /* Allow more height */
 }

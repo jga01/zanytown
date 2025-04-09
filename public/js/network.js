@@ -13,8 +13,6 @@ import {
   hideRecolorPanel,
   setSelectedInventoryItem,
   hideShopPanel,
-  updatePickupButtonState,
-  updateRecolorButtonState,
   updateInventorySelection,
   updateUICursor,
   centerCameraOnRoom,
@@ -22,6 +20,8 @@ import {
   hideLoadingOverlay, // For hiding overlay after load
   updateAdminUI, // To update admin controls visibility/state
   updateAdminRoomList, // To populate the admin room list
+  populateRoomsPanel, // Added for room list population
+  togglePanel, // Import togglePanel if needed (e.g., closing shop panel on disconnect)
 } from "./uiManager.js";
 import { playSound } from "./sounds.js";
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js";
@@ -164,7 +164,12 @@ export function requestChangeRoom(targetRoomId, targetX, targetY) {
   emitIfConnected("request_change_room", data);
 }
 
-// --- NEW Admin Emitters ---
+/** Requests the list of public rooms from the server. */
+export function requestPublicRooms() {
+  emitIfConnected("request_public_rooms");
+}
+
+// --- Admin Emitters ---
 export function requestCreateRoom(roomId, cols, rows) {
   const data = { roomId };
   if (cols) data.cols = cols;
@@ -196,6 +201,7 @@ async function setupSocketListeners() {
   socket.off("disconnect");
   socket.off("room_state");
   socket.off("your_avatar_id");
+  socket.off("your_persistent_id"); // Added this one
   socket.off("avatar_added");
   socket.off("avatar_removed");
   socket.off("avatar_update");
@@ -211,8 +217,9 @@ async function setupSocketListeners() {
   socket.off("connect_error");
   socket.off("auth_error");
   socket.off("force_disconnect");
-  socket.off("layout_tile_update"); // NEW
-  socket.off("all_room_ids_update"); // NEW
+  socket.off("layout_tile_update");
+  socket.off("all_room_ids_update");
+  socket.off("public_rooms_update"); // Added this one
 
   // --- Connection Lifecycle ---
   socket.on("connect", () => {
@@ -230,12 +237,18 @@ async function setupSocketListeners() {
     resetLocalState(); // Reset client game state
     showLoadingOverlay(`Disconnected: ${reason}. Please refresh.`); // Re-show disconnect message
     gameState.myAvatarId = null;
+    gameState.myUserId = null; // Clear persistent ID on disconnect
     socket = null; // Clear socket reference
-    // Disable UI buttons
-    uiState.openShopBtn?.setAttribute("disabled", "true");
-    uiState.toggleEditBtn?.setAttribute("disabled", "true");
-    uiState.pickupFurniBtn?.setAttribute("disabled", "true");
-    uiState.recolorFurniBtn?.setAttribute("disabled", "true");
+    // Disable UI buttons that require connection
+    if (uiState.toggleShopBtn) uiState.toggleShopBtn.disabled = true;
+    if (uiState.toggleEditBottomBtn)
+      uiState.toggleEditBottomBtn.disabled = true;
+    if (uiState.toggleAdminBtn) uiState.toggleAdminBtn.disabled = true;
+    if (uiState.toggleRoomsBtn) uiState.toggleRoomsBtn.disabled = true; // Disable rooms btn
+    if (uiState.toggleInventoryBtn) uiState.toggleInventoryBtn.disabled = true; // Disable inv btn
+    if (uiState.toggleUsersBtn) uiState.toggleUsersBtn.disabled = true; // Disable users btn
+    if (uiState.toggleDebugBtn) uiState.toggleDebugBtn.disabled = true; // Disable debug btn
+
     updateAdminUI(); // Hide admin controls on disconnect
   });
 
@@ -264,7 +277,8 @@ async function setupSocketListeners() {
     uiState.activeChatBubbles = [];
     hideProfilePanel();
     hideRecolorPanel();
-    hideShopPanel();
+    // Shop panel is toggled, ensure it's closed if open during reset
+    if (uiState.activePanelId === "shop") togglePanel("shop", false);
     // Reset edit mode state
     uiState.isEditMode = false;
     if (CLIENT_CONFIG)
@@ -275,13 +289,11 @@ async function setupSocketListeners() {
     uiState.editMode.placementRotation = 0;
     uiState.activeRecolorFurniId = null;
     // Reset UI elements related to edit mode
-    updatePickupButtonState();
-    updateRecolorButtonState();
     updateInventorySelection();
     updateUICursor();
-    if (uiState.toggleEditBtn) {
-      uiState.toggleEditBtn.textContent = `Make Stuff? (Off)`;
-      uiState.toggleEditBtn.classList.remove("active");
+    if (uiState.toggleEditBottomBtn) {
+      uiState.toggleEditBottomBtn.classList.remove("active");
+      uiState.toggleEditBottomBtn.disabled = false; // Re-enable edit button
     }
     // --- End Partial Reset ---
 
@@ -348,10 +360,19 @@ async function setupSocketListeners() {
     if (uiState.debugDiv)
       uiState.debugDiv.textContent = `Room '${state.id}' loaded.`;
 
-    // Enable buttons
-    uiState.openShopBtn?.removeAttribute("disabled");
-    uiState.toggleEditBtn?.removeAttribute("disabled");
-    // Pickup/Recolor buttons depend on edit state/selection, handled elsewhere
+    // Enable bottom bar buttons
+    if (uiState.toggleShopBtn) uiState.toggleShopBtn.disabled = false;
+    // Edit button already re-enabled above
+    if (
+      uiState.toggleAdminBtn &&
+      gameState.avatars[gameState.myAvatarId]?.isAdmin
+    ) {
+      uiState.toggleAdminBtn.disabled = false;
+    }
+    if (uiState.toggleRoomsBtn) uiState.toggleRoomsBtn.disabled = false;
+    if (uiState.toggleInventoryBtn) uiState.toggleInventoryBtn.disabled = false;
+    if (uiState.toggleUsersBtn) uiState.toggleUsersBtn.disabled = false;
+    if (uiState.toggleDebugBtn) uiState.toggleDebugBtn.disabled = false;
 
     // Refresh UI elements that might depend on room state or player avatar
     populateInventory(); // Refresh inventory display
@@ -373,9 +394,18 @@ async function setupSocketListeners() {
     requestUserList(); // Request user list now
   });
 
+  socket.on("your_persistent_id", (userId) => {
+    gameState.myUserId = String(userId);
+    console.log(
+      `[DEBUG CLIENT] Received myUserId: '${
+        gameState.myUserId
+      }' (Type: ${typeof gameState.myUserId})`
+    );
+    window.debugMyUserId = gameState.myUserId; // Expose for easier debugging
+  });
+
   // --- Incremental Updates & Events ---
   socket.on("avatar_added", (avatarDTO) => {
-    // console.log("DEBUG: Received avatar_added:", JSON.stringify(avatarDTO));
     if (
       !avatarDTO ||
       avatarDTO.id == null ||
@@ -398,14 +428,16 @@ async function setupSocketListeners() {
         );
       }
     } else {
-      gameState.avatars[avatarIdStr].update(
-        avatarDTO
-      ); /* ... update existing ... */
+      // Avatar already exists? Update instead of adding.
+      console.warn(
+        `Received avatar_added for existing avatar ${avatarIdStr}. Updating instead.`
+      );
+      gameState.avatars[avatarIdStr].update(avatarDTO);
+      requestUserList(); // Update list in case name/admin status changed
     }
   });
 
   socket.on("avatar_removed", (data) => {
-    // console.log("DEBUG: Received avatar_removed:", JSON.stringify(data));
     if (!data || data.id == null) return;
     const avatarIdStr = String(data.id);
     const removedAvatar = gameState.avatars[avatarIdStr];
@@ -420,7 +452,6 @@ async function setupSocketListeners() {
   });
 
   socket.on("avatar_update", (avatarDTO) => {
-    // console.log("DEBUG: Received avatar_update:", JSON.stringify(avatarDTO)); // Noisy
     if (!avatarDTO || avatarDTO.id == null) return;
     const avatarIdStr = String(avatarDTO.id);
     const avatar = gameState.avatars[avatarIdStr];
@@ -459,7 +490,6 @@ async function setupSocketListeners() {
   });
 
   socket.on("furni_added", (furniDTO) => {
-    // console.log("DEBUG: Received furni_added:", JSON.stringify(furniDTO));
     if (!furniDTO || furniDTO.id == null) return;
     const furniIdStr = String(furniDTO.id);
     let isNew = false;
@@ -475,15 +505,15 @@ async function setupSocketListeners() {
         );
       }
     } else {
-      gameState.furniture[furniIdStr].update(
-        furniDTO
-      ); /* ... update existing ... */
+      console.warn(
+        `Received furni_added for existing furni ${furniIdStr}. Updating instead.`
+      );
+      gameState.furniture[furniIdStr].update(furniDTO);
     }
     if (isNew) playSound("place");
   });
 
   socket.on("furni_removed", (data) => {
-    // console.log("DEBUG: Received furni_removed:", JSON.stringify(data));
     if (!data || data.id == null) return;
     const furniIdStr = String(data.id);
     const removedFurni = gameState.furniture[furniIdStr];
@@ -502,7 +532,6 @@ async function setupSocketListeners() {
   });
 
   socket.on("furni_updated", (updateData) => {
-    // console.log("DEBUG: Received furni_updated:", JSON.stringify(updateData));
     if (!updateData || updateData.id == null) return;
     const furniIdStr = String(updateData.id);
     const furni = gameState.furniture[furniIdStr];
@@ -521,31 +550,36 @@ async function setupSocketListeners() {
 
   // --- Layout Update Listener ---
   socket.on("layout_tile_update", (data) => {
-    // console.log("DEBUG: Received layout_tile_update:", JSON.stringify(data));
     if (!data || data.x == null || data.y == null || data.type == null) {
-      /* ... error handling ... */ return;
+      console.warn("Received invalid layout_tile_update data:", data);
+      return;
     }
     const tile = gameState.clientTiles?.find(
       (t) => t.x === data.x && t.y === data.y
     );
     if (tile instanceof ClientTile) {
       tile.layoutType = data.type;
-      tile._setBaseColor(); // Update visual
+      tile._setBaseColor(); // Update visual base color
+      // Update internal room layout array for consistency
+      if (gameState.roomLayout[data.y]) {
+        gameState.roomLayout[data.y][data.x] = data.type;
+      }
       // If placing item, re-validate placement after layout change
       if (
         uiState.isEditMode &&
         uiState.editMode.state === CLIENT_CONFIG?.EDIT_STATE_PLACING
       ) {
-        updateHighlights();
+        // The updateHighlights function called in the game loop will handle this
       }
     } else {
-      /* ... error handling ... */
+      console.warn(
+        `Could not find client tile at (${data.x}, ${data.y}) to update.`
+      );
     }
   });
 
   // --- User/Global State Updates ---
   socket.on("inventory_update", (inventoryData) => {
-    // console.log("DEBUG: Received inventory_update:", JSON.stringify(inventoryData));
     gameState.inventory =
       typeof inventoryData === "object" && inventoryData !== null
         ? inventoryData
@@ -555,7 +589,6 @@ async function setupSocketListeners() {
   });
 
   socket.on("currency_update", (data) => {
-    // console.log("DEBUG: Received currency_update:", JSON.stringify(data));
     if (data && typeof data.currency === "number") {
       gameState.myCurrency = data.currency;
       updateCurrencyDisplay();
@@ -564,19 +597,27 @@ async function setupSocketListeners() {
   });
 
   socket.on("user_list_update", (users) => {
-    // console.log("DEBUG: Received user_list_update:", users ? `${users.length} users` : "INVALID DATA");
     updateUserListPanel(users || []);
   });
 
   socket.on("show_profile", (profileData) => {
-    // console.log("DEBUG: Received show_profile:", JSON.stringify(profileData));
     if (!profileData || !profileData.id) return;
     showProfilePanel(profileData);
   });
 
+  // --- ADDED: Public Room List Update Handler ---
+  socket.on("public_rooms_update", (roomData) => {
+    console.log("DEBUG: Received public_rooms_update:", roomData);
+    if (Array.isArray(roomData)) {
+      populateRoomsPanel(roomData); // Call uiManager function to display
+    } else {
+      console.warn("Received invalid data for public_rooms_update:", roomData);
+      populateRoomsPanel([]); // Clear panel or show error state
+    }
+  });
+
   // --- Admin Room List Update ---
   socket.on("all_room_ids_update", (roomIds) => {
-    // console.log("DEBUG: Received all_room_ids_update:", roomIds);
     if (Array.isArray(roomIds)) {
       updateAdminRoomList(roomIds);
     } else {
@@ -586,7 +627,6 @@ async function setupSocketListeners() {
 
   // --- Chat & Feedback ---
   socket.on("chat_message", (data) => {
-    // console.log("DEBUG: Received chat_message:", JSON.stringify(data));
     if (!data || typeof data.text !== "string") return;
     const avatarIdStr = data.avatarId ? String(data.avatarId) : null;
     const avatar = avatarIdStr ? gameState.avatars[avatarIdStr] : null;
@@ -599,7 +639,7 @@ async function setupSocketListeners() {
       avatar.say?.(data.text); // Display bubble
       if (avatarIdStr !== gameState.myAvatarId) playSound("chat"); // Sound for others
     } else {
-      playSound("chat");
+      playSound("chat"); // Sound for server/announce
     } // Sound for server/announce
 
     if (receivedIsAdmin && data.avatarName !== "Admin")

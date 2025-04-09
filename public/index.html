@@ -4,23 +4,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZanyTown - Welcome!</title>
+    <!-- MODIFIED: Title -->
+    <title>ZanyTown - Modernized!</title>
+    <!-- MODIFIED: Use new style.css -->
     <link rel="stylesheet" href="style.css">
-    <!-- Google Fonts Import handled in style.css -->
+    <!-- Load Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
 </head>
 
 <body>
-    <!-- App Wrapper for overall layout -->
+    <!-- MODIFIED: New App Wrapper Structure -->
     <div id="app-wrapper">
 
-        <!-- Loading Overlay (Visible by default via CSS) -->
+        <!-- Loading Overlay (Remains similar, styled by CSS) -->
         <div id="loading-overlay">
             <div id="loading-message">Initializing ZanyTown...</div>
-            <!-- Optional: <div class="spinner"></div> -->
+            <div class="spinner"></div> <!-- Added spinner -->
         </div>
         <!-- End Loading Overlay -->
 
-        <!-- Header Bar -->
+        <!-- Header Bar (Remains similar, styled by CSS) -->
         <header id="main-header">
             <h1>🤪 ZanyTown! 🤪</h1>
             <div id="room-name-display" class="header-info">Room: Loading...</div>
@@ -28,66 +33,83 @@
             <button id="logout-btn" title="Log out and return to login screen">Bye Bye!</button>
         </header>
 
-        <!-- Main Content Area (Flex Row) -->
+        <!-- Main Content Area (Contains Game World) -->
         <main id="main-content">
 
-            <!-- Left Sidebar -->
-            <aside id="left-sidebar" class="sidebar">
-                <div id="room-controls" class="ui-panel panel-column">
-                    <h4>Shenanigans</h4>
-                    <button id="zoom-in-btn" title="Zoom In (Scroll Up)">Get Closer!</button>
-                    <button id="zoom-out-btn" title="Zoom Out (Scroll Down)">Back Off!</button>
-                    <button id="toggle-edit-btn" title="Toggle Build/Edit Mode (E)">Make Stuff? (Off)</button>
-                    <button id="open-shop-btn" title="Open Shop Catalog">Gizmo Shop</button>
-                </div>
-                 <div id="user-list-panel" class="ui-panel panel-column">
-                     <h4>Who's Here?</h4>
-                     <ul id="user-list-content">
-                         <li><i>Joining room...</i></li>
-                     </ul>
-                 </div>
-
-                 <!-- START: Admin Controls Panel (Hidden by default) -->
-                 <div id="admin-controls" class="ui-panel panel-column" style="display: none;">
-                    <h4>Admin Powers</h4>
-                    <button id="create-room-btn" title="Create a new empty room">Create Room</button>
-
-                    <div id="admin-room-section" class="admin-section">
-                        <h5>Available Rooms</h5>
-                        <div id="admin-room-list" class="admin-list-box">
-                            <i>Loading rooms...</i>
-                        </div>
-                    </div>
-
-                    <div id="admin-layout-edit-section" class="admin-section">
-                        <h5>Layout Paint Type</h5>
-                        <div id="admin-layout-tile-type" class="admin-radio-group">
-                            <label><input type="radio" name="layout-paint-type" value="0" checked> Floor</label>
-                            <label><input type="radio" name="layout-paint-type" value="1"> Wall</label>
-                            <label><input type="radio" name="layout-paint-type" value="2"> AltFloor</label>
-                            <label><input type="radio" name="layout-paint-type" value="X"> Hole</label>
-                        </div>
-                         <p class="admin-instruction">(In Edit Mode, click tiles on map to paint)</p>
-                    </div>
-                 </div>
-                 <!-- END: Admin Controls Panel -->
-
-                 <div id="coords-debug" class="ui-panel panel-column">
-                     <h4>Nerd Stuff</h4>
-                     <div id="debug-content">Initializing...</div>
-                </div>
-            </aside>
-
-            <!-- Game Canvas Area (Center) -->
+            <!-- Game World (Canvas + Overlays) -->
             <div id="game-world">
+                <!-- Container for Canvas and Absolutely Positioned Panels -->
                 <div id="game-container">
                     <canvas id="gameCanvas">
                         Uh oh! Your browser doesn't support the magic canvas!
                     </canvas>
-                    <!-- Chat Bubbles Container -->
+                    <!-- Chat Bubbles Container (Overlays Canvas) -->
                     <div id="chat-bubbles-container"></div>
 
-                    <!-- Floating Panels positioned OVER the canvas -->
+                    <!-- START: Toggled Panels (Positioned over canvas, initially hidden) -->
+
+                    <!-- Inventory Panel -->
+                    <div id="inventory-panel" class="toggle-panel ui-panel panel-column right" style="display: none;">
+                        <button class="close-panel-btn" data-panel-id="inventory-panel" title="Close Inventory">X</button>
+                        <h4>Your Junk</h4>
+                        <div id="inventory-items" class="panel-content-scrollable">
+                            <p><i>Connecting...</i></p>
+                        </div>
+                    </div>
+
+                    <!-- User List Panel -->
+                    <div id="user-list-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                        <button class="close-panel-btn" data-panel-id="user-list-panel" title="Close Users">X</button>
+                        <h4>Who's Here?</h4>
+                        <ul id="user-list-content" class="panel-content-scrollable">
+                            <li><i>Joining room...</i></li>
+                        </ul>
+                    </div>
+
+                    <!-- Rooms Panel -->
+                     <div id="rooms-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                          <button class="close-panel-btn" data-panel-id="rooms-panel" title="Close Rooms">X</button>
+                          <h4>Rooms</h4>
+                          <div id="rooms-list-content" class="panel-content-scrollable">
+                              <p><i>Fetching rooms...</i></p>
+                          </div>
+                      </div>
+
+                    <!-- Admin Panel -->
+                    <div id="admin-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                         <button class="close-panel-btn" data-panel-id="admin-panel" title="Close Admin">X</button>
+                         <h4>Admin Powers</h4>
+                         <div class="panel-content-scrollable">
+                             <button id="create-room-btn" title="Create a new empty room">Create Room</button>
+                             <div id="admin-room-section" class="admin-section">
+                                 <h5>Available Rooms</h5>
+                                 <div id="admin-room-list" class="admin-list-box">
+                                     <i>Loading rooms...</i>
+                                 </div>
+                             </div>
+                             <div id="admin-layout-edit-section" class="admin-section">
+                                 <h5>Layout Paint Type</h5>
+                                 <div id="admin-layout-tile-type" class="admin-radio-group">
+                                     <label><input type="radio" name="layout-paint-type" value="0" checked> Floor</label>
+                                     <label><input type="radio" name="layout-paint-type" value="1"> Wall</label>
+                                     <label><input type="radio" name="layout-paint-type" value="2"> AltFloor</label>
+                                     <label><input type="radio" name="layout-paint-type" value="X"> Hole</label>
+                                 </div>
+                                 <p class="admin-instruction">(In Edit Mode, click tiles on map to paint)</p>
+                             </div>
+                         </div>
+                    </div>
+
+                    <!-- Debug Panel -->
+                     <div id="debug-panel" class="toggle-panel ui-panel panel-column left" style="display: none;">
+                         <button class="close-panel-btn" data-panel-id="debug-panel" title="Close Debug">X</button>
+                         <h4>Nerd Stuff</h4>
+                         <div id="debug-content" class="panel-content-scrollable">Initializing...</div>
+                     </div>
+                     <!-- END: Toggled Panels -->
+
+
+                    <!-- START: Floating Panels (Profile, Recolor) -->
                     <div id="profile-panel" class="ui-panel floating-panel" style="display: none;">
                          <button id="profile-close-btn" class="close-btn" title="Close Profile">X</button>
                          <h4>Who Dat?</h4>
@@ -97,53 +119,56 @@
                          <button id="recolor-close-btn" class="close-btn" title="Close Recolor">X</button>
                          <h4>Splash Some Color!</h4>
                          <p id="recolor-item-name">Item: ???</p>
-                         <div id="recolor-swatches"> <!-- Container for color swatches -->
+                         <div id="recolor-swatches">
                              <p><i>Fetching colors...</i></p>
                          </div>
                          <button id="recolor-reset-btn" title="Reset to boring default color">Go Back!</button>
                      </div>
-                     <div id="shop-panel" class="ui-panel floating-panel" style="display: none;">
-                         <button id="shop-close-btn" class="close-btn" title="Close Shop">X</button>
+                     <!-- Shop Panel - Now a Toggle Panel -->
+                     <div id="shop-panel" class="toggle-panel ui-panel panel-column right" style="display: none;">
+                         <button class="close-panel-btn" data-panel-id="shop-panel" title="Close Shop">X</button>
                          <h4>Gizmo-Mart</h4>
-                         <div id="shop-items">
+                         <div id="shop-items" class="panel-content-scrollable">
                              <p><i>Stocking shelves...</i></p>
                          </div>
                      </div>
+                     <!-- END: Floating Panels -->
 
-                </div>
-                <!-- Chat Area (Below Canvas) -->
-                <div id="chat-area" class="ui-panel">
+                    <!-- Context Menu (Initially Hidden, positioned by JS) -->
+                    <div id="context-menu" style="display: none;">
+                        <ul>
+                            <!-- Items populated by JS -->
+                        </ul>
+                    </div>
+
+                </div> <!-- End #game-container -->
+
+                <!-- Chat Area (Below Canvas Container) -->
+                <div id="chat-area">
                     <div id="chat-log"></div>
                     <input type="text" id="chat-input" placeholder="Say something zany! Or type /help" autocomplete="off">
                 </div>
-            </div>
+            </div> <!-- End #game-world -->
 
+        </main> <!-- End #main-content -->
 
-            <!-- Right Sidebar -->
-            <aside id="right-sidebar" class="sidebar">
-                 <div id="inventory-panel" class="ui-panel panel-column">
-                    <h4>Your Junk</h4>
-                    <div id="inventory-items">
-                        <p><i>Connecting...</i></p>
-                    </div>
-                    <div class="inventory-actions">
-                        <!-- Pickup Button -->
-                        <button id="pickup-furni-btn" disabled title="Yoink! Pick up selected furniture (Delete/Backspace)">Yoink!</button>
-                        <!-- Recolor Button (initially hidden, enabled based on selection) -->
-                        <button id="recolor-furni-btn" disabled style="display: none;" title="Recolor selected furniture">Paint It!</button>
-                    </div>
-                </div>
-                <!-- Could add more panels here later, e.g., quests, settings -->
-            </aside>
-
-        </main>
+        <!-- NEW: Bottom Bar -->
+        <footer id="bottom-bar">
+            <button id="toggle-inventory-btn" class="bottom-bar-btn" title="Inventory (I)"><span class="icon">🎒</span><span class="label">Junk</span></button>
+            <button id="toggle-rooms-btn" class="bottom-bar-btn" title="Rooms"><span class="icon">🚪</span><span class="label">Rooms</span></button>
+            <button id="toggle-users-btn" class="bottom-bar-btn" title="Users"><span class="icon">👥</span><span class="label">Users</span></button>
+            <button id="toggle-shop-btn" class="bottom-bar-btn" title="Shop"><span class="icon">🛒</span><span class="label">Shop</span></button>
+            <button id="toggle-edit-bottom-btn" class="bottom-bar-btn" title="Toggle Build/Edit Mode (E)"><span class="icon">🔨</span><span class="label">Edit</span></button>
+            <!-- Conditional Admin Button -->
+            <button id="toggle-admin-btn" class="bottom-bar-btn" title="Admin Panel" style="display: none;"><span class="icon">👑</span><span class="label">Admin</span></button>
+             <!-- Debug Toggle Button -->
+             <button id="toggle-debug-btn" class="bottom-bar-btn" title="Toggle Debug Info"><span class="icon">🐞</span><span class="label">Debug</span></button>
+        </footer>
 
     </div> <!-- End #app-wrapper -->
 
-    <!-- Load Socket.IO client library -->
+    <!-- Scripts Remain the Same -->
     <script src="/socket.io/socket.io.js"></script>
-    <!-- Load Client Game Logic (using ES Modules) -->
     <script type="module" src="js/main.js"></script>
 </body>
-
 </html>
