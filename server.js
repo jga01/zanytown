@@ -16,7 +16,11 @@ const { SHARED_CONFIG, SERVER_CONFIG } = require("./lib/config");
 const ServerRoom = require("./lib/room");
 const SocketHandlers = require("./server_socket_handlers");
 const ConsoleCommands = require("./server_console");
-const { ServerGameObject, ServerAvatar } = require("./lib/game_objects"); // Needed for instanceof checks, ServerAvatar for explicit use
+const {
+  ServerGameObject,
+  ServerAvatar,
+  ServerNPC,
+} = require("./lib/game_objects"); // Needed for instanceof checks, ServerAvatar for explicit use
 const connectDB = require("./lib/db");
 const authRoutes = require("./routes/authRoutes");
 const User = require("./models/user");
@@ -65,6 +69,7 @@ let gameLoopInterval;
 let consoleInterface;
 // Map: socket.id -> { socket, avatarId (runtime), userId (persistent User._id) }
 const clients = {};
+let npcDefinitions = [];
 
 // --- Database Helper Functions ---
 async function findUserByIdFromDB(userId) {
@@ -228,6 +233,26 @@ async function startServer() {
     // 1. Connect to Database
     await connectDB();
 
+    // --- Load NPC Definitions ---
+    try {
+      const npcFilePath = path.join(__dirname, "data", "npc_definitions.json");
+      if (fs.existsSync(npcFilePath)) {
+        const npcJsonData = fs.readFileSync(npcFilePath, "utf8");
+        npcDefinitions = JSON.parse(npcJsonData);
+        console.log(
+          `Successfully loaded ${npcDefinitions.length} NPC definitions.`
+        );
+      } else {
+        console.warn(
+          "npc_definitions.json not found. No NPCs will be spawned."
+        );
+      }
+    } catch (error) {
+      console.error("Error loading npc_definitions.json:", error);
+      // Continue startup without NPCs
+    }
+    // --- End Load NPC Definitions --
+
     // 2. Initialization and Room Loading from DB
     console.log("Initializing Server Rooms from Database/Defaults...");
     for (const roomId of SERVER_CONFIG.INITIAL_ROOMS) {
@@ -258,6 +283,31 @@ async function startServer() {
       process.exit(1);
     }
     console.log(`Finished initializing rooms. ${rooms.size} room(s) active.`);
+
+    // --- Spawn NPCs ---
+    console.log("Spawning NPCs...");
+    let npcSpawnCount = 0;
+    npcDefinitions.forEach((npcDef) => {
+      const targetRoom = rooms.get(npcDef.roomId);
+      if (targetRoom) {
+        try {
+          const npcInstance = new ServerNPC(npcDef, npcDef.roomId);
+          targetRoom.addAvatar(npcInstance); // Add NPC to room's avatar list for now
+          npcSpawnCount++;
+          console.log(
+            ` -> Spawned NPC ${npcInstance.name} (ID: ${npcInstance.id}) in room ${targetRoom.id}`
+          );
+        } catch (npcError) {
+          console.error(`Failed to create/add NPC ${npcDef.npcId}:`, npcError);
+        }
+      } else {
+        console.warn(
+          `Cannot spawn NPC ${npcDef.npcId}: Room ${npcDef.roomId} not found.`
+        );
+      }
+    });
+    console.log(`Finished spawning ${npcSpawnCount} NPCs.`);
+    // --- End Spawn NPCs ---
 
     // 3. Initialize Socket Handlers (Pass DB Helpers)
     SocketHandlers.initializeHandlers(
@@ -381,7 +431,8 @@ async function startServer() {
           const updates = room.update(
             cappedDeltaTimeMs,
             io,
-            handleChangeRoomFunc
+            handleChangeRoomFunc,
+            clients
           ); // Pass changeRoom handler
 
           // Broadcast specific updates based on room.update results
@@ -397,6 +448,30 @@ async function startServer() {
               }
             });
           }
+
+          // --- Update NPCs ---
+          const changedNpcs = [];
+          const allObjectsInRoom = Object.values(room.avatars);
+
+          allObjectsInRoom.forEach((obj) => {
+            if (obj instanceof ServerNPC) {
+              // Check if it's an NPC
+              if (obj.updateAI(cappedDeltaTimeMs, room)) {
+                // If updateAI changed state/pos/dir, add DTO to broadcast list
+                changedNpcs.push(obj.toDTO());
+              }
+            }
+          });
+
+          // Broadcast NPC updates
+          if (changedNpcs.length > 0) {
+            changedNpcs.forEach((npcDTO) => {
+              // Use npc_update event for clarity
+              io.to(roomId).emit("npc_update", npcDTO);
+            });
+          }
+          // --- ENd NPC Update ---
+
           // Furniture/other updates are usually broadcast directly by handlers now
         } catch (roomUpdateError) {
           console.error(

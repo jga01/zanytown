@@ -10,6 +10,7 @@ import {
 } from "./uiManager.js";
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js"; // Needed for interpolation target type
 import { ClientFurniture } from "./gameObjects/ClientFurniture.js"; // Needed for interpolation target type
+import { ClientNPC } from "./gameObjects/ClientNPC.js";
 
 let lastTimestamp = 0;
 let animationFrameId = null; // To store the request ID for cancellation
@@ -81,6 +82,11 @@ function gameLoop(timestamp) {
   Object.values(gameState.avatars || {}).forEach((a) => {
     if (a instanceof ClientAvatar && typeof a.interpolate === "function") {
       a.interpolate(clampedInterpolationFactor);
+    }
+  });
+  Object.values(gameState.npcs || {}).forEach((n) => {
+    if (n instanceof ClientNPC && typeof n.interpolate === "function") {
+      n.interpolate(clampedInterpolationFactor);
     }
   });
   Object.values(gameState.furniture || {}).forEach((f) => {

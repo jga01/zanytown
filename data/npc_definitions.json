@@ -1,0 +1,39 @@
+
+[
+    {
+      "npcId": "bob_the_wanderer",
+      "name": "Bob",
+      "roomId": "main_lobby",
+      "x": 5,
+      "y": 5,
+      "bodyColor": "#90EE90", 
+      "behavior": {
+        "type": "wander",
+        "wanderRadius": 4,    
+        "minWaitMs": 3000,
+        "maxWaitMs": 8000
+      },
+      "dialogue": [ 
+        "Just wandering around...",
+        "Nice day, isn't it?",
+        "Hmm, where should I go next?"
+      ]
+    },
+    {
+      "npcId": "guard_gary",
+      "name": "Guard Gary",
+      "roomId": "main_lobby",
+      "x": 12,
+      "y": 4,
+      "bodyColor": "#A9A9A9", 
+      "behavior": {
+        "type": "stationary",
+        "lookAround": true 
+      },
+      "dialogue": [
+        "Halt! ... Just kidding.",
+        "Keeping an eye on things.",
+        "Move along."
+      ]
+    }
+]

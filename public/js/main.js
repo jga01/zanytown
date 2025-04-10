@@ -12,9 +12,6 @@ import {
   resetUIState, // Keep this import
   hideProfilePanel,
   hideRecolorPanel,
-  hideShopPanel,
-  // REMOVED updatePickupButtonState, // <-- REMOVED
-  // REMOVED updateRecolorButtonState, // <-- REMOVED
   updateInventorySelection,
   updateUICursor,
   updateCurrencyDisplay,

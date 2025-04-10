@@ -15,6 +15,7 @@ export const gameState = {
   clientTiles: [], // Array of ClientTile instances representing the room floor/walls
   furniture: {}, // Map: furnitureDbId (string) -> ClientFurniture instance
   avatars: {}, // Map: avatarRuntimeId (string) -> ClientAvatar instance
+  npcs: {}, // <-- Map: npcRuntimeId (string) -> ClientNPC instance
   highlightedTile: null, // {x, y} world coordinates of the tile currently under the mouse, if valid
 
   // --- Player Specific State (Synced with Server) ---

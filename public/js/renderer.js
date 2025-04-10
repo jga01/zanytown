@@ -186,6 +186,24 @@ export function renderGame() {
     });
   }
 
+  if (gameState.npcs) {
+    const npcArray = Object.values(gameState.npcs);
+    totalObjects += npcArray.length;
+    npcArray.forEach((npc) => {
+      // Check visual position against bounds (same logic as avatars)
+      if (
+        npc &&
+        typeof npc.draw === "function" && // Ensure it has a draw method
+        npc.visualX >= bounds.minX &&
+        npc.visualX <= bounds.maxX &&
+        npc.visualY >= bounds.minY &&
+        npc.visualY <= bounds.maxY
+      ) {
+        visibleDrawables.push(npc); // Add NPC instance to the drawables
+      }
+    });
+  }
+
   // --- Sort Filtered Objects ---
   // Sort based on pre-calculated drawOrder (lower numbers drawn first)
   visibleDrawables.sort((a, b) => (a?.drawOrder ?? 0) - (b?.drawOrder ?? 0));

@@ -1,5 +1,5 @@
 import { SHARED_CONFIG, CLIENT_CONFIG } from "./config.js";
-import { gameState, uiState, camera } from "./gameState.js";
+import { gameState, uiState } from "./gameState.js"; // Removed camera import - not directly used here
 import { resetLocalState } from "./main.js"; // Import the main reset function for disconnects
 import {
   logChatMessage,
@@ -12,7 +12,6 @@ import {
   setSelectedFurniture,
   hideRecolorPanel,
   setSelectedInventoryItem,
-  hideShopPanel, // Keep this one
   updateInventorySelection,
   updateUICursor,
   centerCameraOnRoom,
@@ -21,20 +20,22 @@ import {
   updateAdminUI, // To update admin controls visibility/state
   updateAdminRoomList, // To populate the admin room list
   populateRoomsPanel, // Added for room list population
-  togglePanel, // Import togglePanel if needed (e.g., closing shop panel on disconnect)
-  showNotification, // Make sure showNotification is imported (now maps to showNotificationWithActions)
+  togglePanel, // For closing panels on disconnect/state change
+  showNotification, // Keep simple notification for backward compatibility/simple messages
   showNotificationWithActions, // Import the advanced notification handler
   showTradePanel, // Need function to show/update trade panel
   hideTradePanel, // Need function to hide trade panel
   updateTradePanelOffers, // Need function to update offers visually
   handleTradeRequest, // Need function to display incoming request
   updateTradeConfirmationStatus, // Need function to update confirmed visuals
+  populateTradeInventory, // Import function to refresh trade inventory
 } from "./uiManager.js";
 import { playSound } from "./sounds.js";
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js";
-import { ClientTile } from "./gameObjects/ClientTile.js"; // Needed for room_state processing
+import { ClientTile } from "./gameObjects/ClientTile.js";
 import { ClientFurniture } from "./gameObjects/ClientFurniture.js";
-import { escapeHtml } from "./utils.js"; // Import escapeHtml
+import { ClientNPC } from "./gameObjects/ClientNPC.js"; // <-- Import ClientNPC
+import { escapeHtml } from "./utils.js";
 
 let socket = null;
 
@@ -104,7 +105,7 @@ function emitIfConnected(event, data) {
       `Attempted to emit "${event}" while disconnected. Data:`,
       data
     );
-    // Use notification for feedback instead of chat log
+    // Use notification for feedback
     showNotification("Not connected to server.", "error");
   }
 }
@@ -169,7 +170,7 @@ export function requestChangeRoom(targetRoomId, targetX, targetY) {
     data.targetX = targetX;
     data.targetY = targetY;
   }
-  showLoadingOverlay(`Joining Room: ${targetRoomId}...`);
+  showLoadingOverlay(`Joining Room: ${escapeHtml(targetRoomId)}...`);
   emitIfConnected("request_change_room", data);
 }
 
@@ -199,6 +200,12 @@ export function cancelTrade(tradeId) {
 }
 // --- End Trade Emit Functions ---
 
+// --- Interact Emitter ---
+export function requestInteract(targetId) {
+  emitIfConnected("request_interact", { targetId: String(targetId) });
+}
+// --- End Interact Emitter ---
+
 // --- Admin Emitters ---
 export function requestCreateRoom(roomId, cols, rows) {
   const data = { roomId };
@@ -208,8 +215,7 @@ export function requestCreateRoom(roomId, cols, rows) {
 }
 
 export function requestModifyLayout(roomId, x, y, type) {
-  // Server uses socket's current room, roomId isn't strictly needed but can be explicit
-  // emitIfConnected('request_modify_layout', { roomId, x, y, type });
+  // Server uses socket's current room
   emitIfConnected("request_modify_layout", { x, y, type });
 }
 
@@ -227,45 +233,14 @@ async function setupSocketListeners() {
   }
 
   // Remove existing listeners to prevent duplicates if re-connecting
-  socket.off("connect");
-  socket.off("disconnect");
-  socket.off("room_state");
-  socket.off("your_avatar_id");
-  socket.off("your_persistent_id");
-  socket.off("avatar_added");
-  socket.off("avatar_removed");
-  socket.off("avatar_update");
-  socket.off("furni_added");
-  socket.off("furni_removed");
-  socket.off("furni_updated");
-  socket.off("inventory_update");
-  socket.off("currency_update");
-  socket.off("user_list_update");
-  socket.off("show_profile");
-  socket.off("chat_message");
-  socket.off("action_failed");
-  socket.off("connect_error");
-  socket.off("auth_error");
-  socket.off("force_disconnect");
-  socket.off("layout_tile_update");
-  socket.off("all_room_ids_update");
-  socket.off("public_rooms_update");
-  // Add new trade listeners
-  socket.off("trade_request_incoming");
-  socket.off("trade_start");
-  socket.off("trade_offer_update");
-  socket.off("trade_confirm_update");
-  socket.off("trade_complete");
-  socket.off("trade_cancelled");
-  socket.off("trade_error");
+  socket.removeAllListeners(); // Clear all previous listeners reliably
 
   // --- Connection Lifecycle ---
   socket.on("connect", () => {
     console.log("Connected to server with ID:", socket.id);
     showLoadingOverlay("Connected. Waiting for Player Data...");
     if (uiState.debugDiv) uiState.debugDiv.textContent = "Connected...";
-    // Don't log 'Connected' to chat, let room_state handle entry message
-    // logChatMessage("Connected to server!", true, "info-msg");
+    // Enable basic buttons on connect attempt? Maybe wait for room_state.
   });
 
   socket.on("disconnect", (reason) => {
@@ -276,17 +251,19 @@ async function setupSocketListeners() {
     resetLocalState(); // Reset client game state
     showLoadingOverlay(`Disconnected: ${reason}. Please refresh.`); // Re-show disconnect message
     gameState.myAvatarId = null;
-    gameState.myUserId = null; // Clear persistent ID on disconnect
+    gameState.myUserId = null;
     socket = null; // Clear socket reference
+
     // Disable UI buttons that require connection
     if (uiState.toggleShopBtn) uiState.toggleShopBtn.disabled = true;
     if (uiState.toggleEditBottomBtn)
       uiState.toggleEditBottomBtn.disabled = true;
     if (uiState.toggleAdminBtn) uiState.toggleAdminBtn.disabled = true;
-    if (uiState.toggleRoomsBtn) uiState.toggleRoomsBtn.disabled = true; // Disable rooms btn
-    if (uiState.toggleInventoryBtn) uiState.toggleInventoryBtn.disabled = true; // Disable inv btn
-    if (uiState.toggleUsersBtn) uiState.toggleUsersBtn.disabled = true; // Disable users btn
-    if (uiState.toggleDebugBtn) uiState.toggleDebugBtn.disabled = true; // Disable debug btn
+    if (uiState.toggleRoomsBtn) uiState.toggleRoomsBtn.disabled = true;
+    if (uiState.toggleInventoryBtn) uiState.toggleInventoryBtn.disabled = true;
+    if (uiState.toggleUsersBtn) uiState.toggleUsersBtn.disabled = true;
+    if (uiState.toggleDebugBtn) uiState.toggleDebugBtn.disabled = true;
+    if (uiState.logoutBtn) uiState.logoutBtn.disabled = true; // Disable logout too? Maybe not.
 
     updateAdminUI(); // Hide admin controls on disconnect
   });
@@ -307,6 +284,7 @@ async function setupSocketListeners() {
     // --- Partial Reset (Keep global state like inventory/currency) ---
     gameState.furniture = {};
     gameState.avatars = {};
+    gameState.npcs = {}; // <-- Clear NPCs
     gameState.clientTiles = [];
     gameState.highlightedTile = null;
     gameState.roomLayout = [];
@@ -317,8 +295,10 @@ async function setupSocketListeners() {
     hideProfilePanel();
     hideRecolorPanel();
     hideTradePanel(); // Ensure trade panel is closed on room change
-    // Shop panel is toggled, ensure it's closed if open during reset
-    if (uiState.activePanelId === "shop") togglePanel("shop", false);
+    // Close any other open toggled panels
+    if (uiState.activePanelId != null) {
+      togglePanel(uiState.activePanelId, false);
+    }
     // Reset edit mode state
     uiState.isEditMode = false;
     if (CLIENT_CONFIG)
@@ -343,8 +323,8 @@ async function setupSocketListeners() {
     gameState.roomRows = state.rows || state.layout.length;
 
     if (uiState.roomNameDisplay)
-      uiState.roomNameDisplay.textContent = `Room: ${state.id}`;
-    document.title = `ZanyTown - ${state.id}`;
+      uiState.roomNameDisplay.textContent = `Room: ${escapeHtml(state.id)}`;
+    document.title = `ZanyTown - ${escapeHtml(state.id)}`;
 
     // Create client-side tile objects
     for (let y = 0; y < gameState.roomRows; y++) {
@@ -369,13 +349,12 @@ async function setupSocketListeners() {
       } else console.warn("Invalid furniture DTO in room_state:", dto);
     });
 
-    // Process avatars (and identify player)
+    // Process player avatars (and identify player)
     state.avatars?.forEach((dto) => {
       if (dto && dto.id != null) {
         try {
           const avatarIdStr = String(dto.id);
           const avatarInstance = new ClientAvatar(dto);
-          // Check if this is our avatar (gameState.myAvatarId should be set by your_avatar_id)
           if (
             gameState.myAvatarId &&
             avatarInstance.id === gameState.myAvatarId
@@ -384,7 +363,7 @@ async function setupSocketListeners() {
             console.log(
               `[room_state] Identified MY AVATAR: ${dto.name} (ID: ${avatarIdStr})`
             );
-            updateAdminUI(); // Update admin controls based on player status
+            updateAdminUI();
           }
           gameState.avatars[avatarIdStr] = avatarInstance;
         } catch (e) {
@@ -393,21 +372,39 @@ async function setupSocketListeners() {
       } else console.warn("Invalid avatar DTO in room_state:", dto);
     });
 
+    // Process NPCs <-- ADDED
+    state.npcs?.forEach((dto) => {
+      if (dto && dto.id != null) {
+        try {
+          const npcIdStr = String(dto.id);
+          gameState.npcs[npcIdStr] = new ClientNPC(dto);
+        } catch (e) {
+          console.error("Error creating ClientNPC from room_state:", dto, e);
+        }
+      } else {
+        console.warn("Invalid NPC DTO in room_state:", dto);
+      }
+    });
+    // --- END NPC PROCESSING ---
+
     centerCameraOnRoom(); // Center camera on the new room
     hideLoadingOverlay(); // Hide overlay AFTER processing complete
 
-    logChatMessage(`Entered room: ${state.id}`, true, "info-msg");
+    logChatMessage(`Entered room: ${escapeHtml(state.id)}`, true, "info-msg");
     if (uiState.debugDiv)
-      uiState.debugDiv.textContent = `Room '${state.id}' loaded.`;
+      uiState.debugDiv.textContent = `Room '${escapeHtml(state.id)}' loaded.`;
 
-    // Enable bottom bar buttons
+    // Enable bottom bar buttons now that room is loaded
     if (uiState.toggleShopBtn) uiState.toggleShopBtn.disabled = false;
-    // Edit button already re-enabled above
+    if (uiState.toggleEditBottomBtn)
+      uiState.toggleEditBottomBtn.disabled = false;
     if (
       uiState.toggleAdminBtn &&
       gameState.avatars[gameState.myAvatarId]?.isAdmin
     ) {
       uiState.toggleAdminBtn.disabled = false;
+    } else if (uiState.toggleAdminBtn) {
+      uiState.toggleAdminBtn.disabled = true; // Ensure disabled if not admin
     }
     if (uiState.toggleRoomsBtn) uiState.toggleRoomsBtn.disabled = false;
     if (uiState.toggleInventoryBtn) uiState.toggleInventoryBtn.disabled = false;
@@ -426,12 +423,12 @@ async function setupSocketListeners() {
     const myIdString = String(id);
     console.log("DEBUG: Received your_avatar_id:", myIdString);
     gameState.myAvatarId = myIdString;
-    // Update isPlayer flag for the avatar if already present (race condition handling)
+    // Update isPlayer flag for the avatar if already present
     if (gameState.avatars[myIdString]) {
       gameState.avatars[myIdString].checkIfPlayer();
-      updateAdminUI(); // Update admin UI now that we know if player is admin
+      updateAdminUI();
     }
-    requestUserList(); // Request user list now
+    requestUserList();
   });
 
   socket.on("your_persistent_id", (userId) => {
@@ -441,7 +438,6 @@ async function setupSocketListeners() {
         gameState.myUserId
       }' (Type: ${typeof gameState.myUserId})`
     );
-    window.debugMyUserId = gameState.myUserId; // Expose for easier debugging
   });
 
   // --- Incremental Updates & Events ---
@@ -456,10 +452,10 @@ async function setupSocketListeners() {
     if (!gameState.avatars[avatarIdStr]) {
       try {
         const newAvatar = new ClientAvatar(avatarDTO);
-        newAvatar.checkIfPlayer(); // Check if this is the player avatar
+        newAvatar.checkIfPlayer();
         gameState.avatars[avatarIdStr] = newAvatar;
         console.log(`Avatar added: ${avatarDTO.name} (ID: ${avatarIdStr})`);
-        requestUserList(); // Update user list
+        requestUserList();
       } catch (e) {
         console.error(
           "Error creating ClientAvatar on avatar_added:",
@@ -468,12 +464,11 @@ async function setupSocketListeners() {
         );
       }
     } else {
-      // Avatar already exists? Update instead of adding.
       console.warn(
         `Received avatar_added for existing avatar ${avatarIdStr}. Updating instead.`
       );
       gameState.avatars[avatarIdStr].update(avatarDTO);
-      requestUserList(); // Update list in case name/admin status changed
+      requestUserList();
     }
   });
 
@@ -497,8 +492,8 @@ async function setupSocketListeners() {
     const avatar = gameState.avatars[avatarIdStr];
     if (avatar instanceof ClientAvatar) {
       const oldState = avatar.state;
-      const oldName = avatar.name; // Track name changes
-      const oldIsAdmin = avatar.isAdmin; // Track admin status changes
+      const oldName = avatar.name;
+      const oldIsAdmin = avatar.isAdmin;
       avatar.update(avatarDTO);
       // Play sounds for *other* avatars' state changes
       if (avatarIdStr !== gameState.myAvatarId) {
@@ -524,8 +519,13 @@ async function setupSocketListeners() {
       ) {
         updateAdminUI();
       }
-      // Update user list if name changed
-      if (avatarDTO.name && oldName !== avatar.name) requestUserList();
+      // Update user list if name or admin status changed
+      if (
+        avatarDTO.name &&
+        (oldName !== avatar.name || oldIsAdmin !== avatar.isAdmin)
+      ) {
+        requestUserList(); // Refresh user list on relevant changes
+      }
     }
   });
 
@@ -588,6 +588,66 @@ async function setupSocketListeners() {
     }
   });
 
+  // --- NPC Handlers --- <-- ADDED
+  socket.on("npc_added", (npcDTO) => {
+    if (
+      !npcDTO ||
+      npcDTO.id == null ||
+      npcDTO.roomId !== gameState.currentRoomId
+    )
+      return;
+    const npcIdStr = String(npcDTO.id);
+    if (!gameState.npcs[npcIdStr]) {
+      try {
+        gameState.npcs[npcIdStr] = new ClientNPC(npcDTO);
+        console.log(`NPC added dynamically: ${npcDTO.name} (ID: ${npcIdStr})`);
+      } catch (e) {
+        console.error("Error creating ClientNPC on npc_added:", npcDTO, e);
+      }
+    } else {
+      console.warn(
+        `Received npc_added for existing NPC ${npcIdStr}. Updating.`
+      );
+      gameState.npcs[npcIdStr].update(npcDTO);
+    }
+  });
+
+  socket.on("npc_removed", (data) => {
+    if (!data || data.id == null) return;
+    const npcIdStr = String(data.id);
+    const removedNpc = gameState.npcs[npcIdStr];
+    if (removedNpc) {
+      console.log(`NPC removed: ${removedNpc.name} (${npcIdStr})`);
+      delete gameState.npcs[npcIdStr];
+    }
+  });
+
+  socket.on("npc_update", (npcDTO) => {
+    if (!npcDTO || npcDTO.id == null) return;
+    const npcIdStr = String(npcDTO.id);
+    const npc = gameState.npcs[npcIdStr];
+    if (npc instanceof ClientNPC) {
+      const oldState = npc.state;
+      npc.update(npcDTO);
+      if (
+        npc.state === SHARED_CONFIG.AVATAR_STATE_WALKING &&
+        oldState !== SHARED_CONFIG.AVATAR_STATE_WALKING
+      ) {
+        playSound("walk");
+      }
+    } else {
+      try {
+        console.warn(
+          `Received npc_update for unknown NPC ${npcIdStr}. Creating.`
+        );
+        gameState.npcs[npcIdStr] = new ClientNPC(npcDTO);
+      } catch (e) {
+        console.error(`Failed to create NPC on update:`, e);
+      }
+    }
+  });
+  // --- End NPC Handlers ---
+
   // --- Layout Update Listener ---
   socket.on("layout_tile_update", (data) => {
     if (!data || data.x == null || data.y == null || data.type == null) {
@@ -600,16 +660,14 @@ async function setupSocketListeners() {
     if (tile instanceof ClientTile) {
       tile.layoutType = data.type;
       tile._setBaseColor(); // Update visual base color
-      // Update internal room layout array for consistency
       if (gameState.roomLayout[data.y]) {
         gameState.roomLayout[data.y][data.x] = data.type;
       }
-      // If placing item, re-validate placement after layout change
       if (
         uiState.isEditMode &&
         uiState.editMode.state === CLIENT_CONFIG?.EDIT_STATE_PLACING
       ) {
-        // The updateHighlights function called in the game loop will handle this
+        // updateHighlights will re-evaluate placement validity
       }
     } else {
       console.warn(
@@ -625,34 +683,26 @@ async function setupSocketListeners() {
         ? inventoryData
         : {};
     populateInventory();
-    updateShopButtonStates(); // Check if purchase now possible/impossible
+    updateShopButtonStates();
     // Refresh trade inventory if trade panel is open
-    if (uiState.isTrading) {
-      // Need a function in uiManager to specifically refresh trade inventory
-      // populateTradeInventory(); // Assuming this exists and works
-      // If not, add a dedicated function in uiManager
-      if (typeof populateTradeInventory === "function") {
-        // Check if function exists before calling
-        populateTradeInventory();
-      }
+    if (uiState.isTrading && typeof populateTradeInventory === "function") {
+      populateTradeInventory();
     }
   });
 
   socket.on("currency_update", (data) => {
     if (data && typeof data.currency === "number") {
-      const oldValue = gameState.myCurrency; // Get old value before updating
+      const oldValue = gameState.myCurrency;
       gameState.myCurrency = data.currency;
-      updateCurrencyDisplay(); // Update visual display
-      updateShopButtonStates(); // Check if purchase now possible/impossible
+      updateCurrencyDisplay();
+      updateShopButtonStates();
 
-      // Example: Show notification if currency increased significantly
       const increase = gameState.myCurrency - oldValue;
       if (increase > 10) {
-        // Arbitrary threshold for significant increase
         showNotification(`Received ${increase} Coins!`, "success");
-        playSound("success"); // Optional sound
+        playSound("success");
       } else if (increase > 0) {
-        // Optional: Add minor sound for small increase?
+        // Minor sound?
       }
     } else console.warn("Received invalid currency update:", data);
   });
@@ -670,10 +720,10 @@ async function setupSocketListeners() {
   socket.on("public_rooms_update", (roomData) => {
     console.log("DEBUG: Received public_rooms_update:", roomData);
     if (Array.isArray(roomData)) {
-      populateRoomsPanel(roomData); // Call uiManager function to display
+      populateRoomsPanel(roomData);
     } else {
       console.warn("Received invalid data for public_rooms_update:", roomData);
-      populateRoomsPanel([]); // Clear panel or show error state
+      populateRoomsPanel([]);
     }
   });
 
@@ -688,50 +738,63 @@ async function setupSocketListeners() {
 
   // --- Chat & Feedback ---
   socket.on("chat_message", (data) => {
-    // Updated logic using showNotification for simple feedback
     if (!data || typeof data.text !== "string") return;
     const avatarIdStr = data.avatarId ? String(data.avatarId) : null;
-    const avatar = avatarIdStr ? gameState.avatars[avatarIdStr] : null;
+    const isNPC = data.isNPC || gameState.npcs[avatarIdStr] !== undefined; // Check if it's a known NPC
+    const isPlayer = !isNPC && gameState.avatars[avatarIdStr] !== undefined;
+
+    let avatar = null;
+    if (isNPC) avatar = gameState.npcs[avatarIdStr];
+    else if (isPlayer) avatar = gameState.avatars[avatarIdStr];
+
     const senderName = avatar
       ? escapeHtml(avatar.name)
       : escapeHtml(data.avatarName || "Unknown");
 
     const isServerInfo =
       !avatarIdStr &&
+      !isNPC &&
       (data.className === "info-msg" || data.className === "server-msg");
-    // Identify simple, transient feedback messages from the server
     const isSimpleFeedback =
       isServerInfo &&
       (data.text.startsWith("You bought") ||
         data.text.startsWith("You received") ||
-        data.text.includes("privileges have been") || // Grant/revoke messages
-        data.text.startsWith("Room") || // Room created message
-        data.text.startsWith("Teleported") || // Teleport success
-        data.text.startsWith("Gave")); // Give success
-    // Add other patterns for simple feedback here if needed
+        data.text.includes("privileges have been") ||
+        data.text.startsWith("Room") ||
+        data.text.startsWith("Teleported") ||
+        data.text.startsWith("Gave"));
 
     if (isSimpleFeedback) {
-      // Show simple feedback as a notification (usually success type)
       const type = data.text.includes("privileges have been revoked")
         ? "info"
-        : "success"; // Adjust type if needed
+        : "success";
       showNotification(data.text, type);
-      playSound(type === "success" ? "success" : "info"); // Optional sounds
+      playSound(type === "success" ? "success" : "info");
     } else if (
       avatar instanceof ClientAvatar &&
       data.avatarId !== gameState.myAvatarId &&
-      !data.className?.includes("announcement")
+      !data.className?.includes("announcement") &&
+      !isNPC
     ) {
-      // Normal chat message from another player
-      avatar.say?.(data.text); // Display bubble
+      // Normal chat from another PLAYER
+      avatar.say?.(data.text);
       logChatMessage(
         `${senderName}: ${escapeHtml(data.text)}`,
         false,
         data.className
-      ); // Log to chat
+      );
       playSound("chat");
+    } else if (avatar instanceof ClientNPC) {
+      // Chat from an NPC
+      avatar.say?.(data.text); // Display bubble
+      logChatMessage(
+        `${senderName}: ${escapeHtml(data.text)}`,
+        false,
+        `npc-dialogue ${data.className || ""}`
+      ); // Log with special class
+      playSound("chat"); // Use same chat sound for now
     } else {
-      // Log own messages, announcements, admin messages, server errors etc., to chat log
+      // Log own messages, announcements, admin messages, server errors etc.
       logChatMessage(
         data.avatarName &&
           data.avatarName !== "Server" &&
@@ -741,17 +804,16 @@ async function setupSocketListeners() {
         avatarIdStr === gameState.myAvatarId,
         data.className
       );
-      // Play sound only if it wasn't simple feedback handled above
       if (!isSimpleFeedback) {
         if (
           avatarIdStr !== gameState.myAvatarId &&
-          !data.className?.includes("announcement")
+          !data.className?.includes("announcement") &&
+          !isNPC
         )
           playSound("chat");
-        if (data.className?.includes("announcement")) playSound("announce"); // Example sound for announcements
-        // Maybe play a different sound for admin messages?
+        if (data.className?.includes("announcement")) playSound("announce");
         if (data.className?.includes("admin-msg") && !data.text.startsWith("["))
-          playSound("admin"); // Example sound
+          playSound("admin");
       }
     }
   });
@@ -759,16 +821,13 @@ async function setupSocketListeners() {
   socket.on("action_failed", (data) => {
     console.warn("DEBUG: Received action_failed:", JSON.stringify(data));
     const reason = data.reason || "Unknown error";
-    // Use notification instead of chat log for transient errors
-    showNotification(`Action failed: ${reason}`, "error");
-    playSound("error"); // Optional error sound
+    showNotification(`Action failed: ${escapeHtml(reason)}`, "error");
+    playSound("error");
   });
 
   // --- NEW Trade Listeners ---
   socket.on("trade_request_incoming", (data) => {
-    // data = { tradeId, requesterId, requesterName }
     if (data && data.tradeId && data.requesterName) {
-      // Call uiManager function to show the notification/popup
       handleTradeRequest(data.tradeId, data.requesterName);
     } else {
       console.warn("Invalid trade_request_incoming data:", data);
@@ -776,75 +835,61 @@ async function setupSocketListeners() {
   });
 
   socket.on("trade_start", (data) => {
-    // data = { tradeId, partnerId, partnerName }
     if (data && data.tradeId && data.partnerId && data.partnerName) {
-      // Call uiManager function to open the trade panel
       showTradePanel(data.tradeId, data.partnerId, data.partnerName);
-      playSound("success"); // Sound for trade starting
+      playSound("success");
     } else {
       console.warn("Invalid trade_start data:", data);
     }
   });
 
   socket.on("trade_offer_update", (data) => {
-    // data = { tradeId, isMyOffer, offer: { items: {}, currency: 0 } }
-    // Also includes confirmation status reset: myConfirmed: bool, partnerConfirmed: bool
     if (
       uiState.isTrading &&
       uiState.tradeSession.tradeId === data.tradeId &&
       data.offer
     ) {
-      // Call uiManager function to update the visual offer display
       updateTradePanelOffers(data.isMyOffer, data.offer);
-      // Reset confirmations visually whenever an offer changes
       updateTradeConfirmationStatus(false, false);
-      if (uiState.tradeConfirmBtn) uiState.tradeConfirmBtn.disabled = true; // Disable confirm until both re-confirm
+      if (uiState.tradeConfirmBtn) uiState.tradeConfirmBtn.disabled = true;
     }
   });
 
   socket.on("trade_confirm_update", (data) => {
-    // data = { tradeId, myConfirmed, partnerConfirmed }
     if (uiState.isTrading && uiState.tradeSession.tradeId === data.tradeId) {
-      // Update the visual confirmation status in the UI
       updateTradeConfirmationStatus(data.myConfirmed, data.partnerConfirmed);
     }
   });
 
   socket.on("trade_complete", (data) => {
-    // data = { tradeId, message: "Trade completed successfully!" }
     if (uiState.isTrading && uiState.tradeSession.tradeId === data.tradeId) {
       hideTradePanel();
       showNotification(data.message || "Trade complete!", "success");
-      playSound("success"); // Success sound
-      // Inventory/currency updates will arrive separately via inventory_update/currency_update
+      playSound("success");
     }
   });
 
   socket.on("trade_cancelled", (data) => {
-    // data = { tradeId, reason }
     if (uiState.isTrading && uiState.tradeSession.tradeId === data.tradeId) {
       hideTradePanel();
       showNotification(
-        `Trade cancelled: ${data.reason || "Unknown reason"}`,
+        `Trade cancelled: ${escapeHtml(data.reason) || "Unknown reason"}`,
         "warning"
       );
-      playSound("error"); // Use error/cancel sound
+      playSound("error");
     }
   });
 
   socket.on("trade_error", (data) => {
-    // data = { reason } - General error related to trading not covered by action_failed
     showNotification(
-      `Trade Error: ${data.reason || "An error occurred"}`,
+      `Trade Error: ${escapeHtml(data.reason) || "An error occurred"}`,
       "error"
     );
     playSound("error");
-    // Optionally hide trade panel if an error occurs mid-trade
     if (uiState.isTrading) {
       hideTradePanel();
     }
   });
-
   // --- End Trade Listeners ---
 
   // --- Error Handling & Disconnects ---
