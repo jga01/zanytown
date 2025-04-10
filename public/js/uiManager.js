@@ -2116,7 +2116,7 @@ export function updateHighlights() {
       setTileHighlight(
         gameState.highlightedTile.x,
         gameState.highlightedTile.y,
-        CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR + "44"
+        CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR
       ); // More transparent
     }
   }
