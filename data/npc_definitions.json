@@ -35,5 +35,23 @@
         "Keeping an eye on things.",
         "Move along."
       ]
+    },
+    {
+      "npcId": "train",
+      "name": "Train of Skeleton",
+      "roomId": "main_lobby",
+      "x": 6,
+      "y": 11,
+      "bodyColor": "#FFA500", 
+      "behavior": {
+        "type": "wander",
+        "wanderRadius": 4,    
+        "minWaitMs": 3000,
+        "maxWaitMs": 8000
+      },
+      "dialogue": [ 
+        "Olo likes rola",
+        "Hello cappies"
+      ]
     }
 ]
