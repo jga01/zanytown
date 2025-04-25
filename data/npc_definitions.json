@@ -39,7 +39,7 @@
     {
       "npcId": "train",
       "name": "Train of Skeleton",
-      "roomId": "main_lobby",
+      "roomId": "trainofskeleton",
       "x": 6,
       "y": 11,
       "bodyColor": "#FFA500", 
