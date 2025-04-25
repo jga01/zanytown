@@ -1,3 +1,5 @@
+// server.js
+
 "use strict";
 
 // --- Core Modules ---
@@ -5,7 +7,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
-const fs = require("fs"); // Note: fs is imported but no longer used for global_state.json
+const fs = require("fs"); // Retained for loading NPC definitions
 require("dotenv").config(); // Load environment variables FIRST
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
@@ -17,7 +19,7 @@ const ServerRoom = require("./lib/room");
 const SocketHandlers = require("./server_socket_handlers");
 const ConsoleCommands = require("./server_console");
 const {
-  ServerGameObject,
+  ServerGameObject, // Keep for potential future use or checks
   ServerAvatar,
   ServerNPC,
 } = require("./lib/game_objects"); // Needed for instanceof checks, ServerAvatar for explicit use
@@ -25,6 +27,7 @@ const connectDB = require("./lib/db");
 const authRoutes = require("./routes/authRoutes");
 const User = require("./models/user");
 const Furniture = require("./models/furniture"); // Load Furniture model
+const RoomState = require("./models/roomState"); // Load RoomState model for startup
 
 // --- Server Setup ---
 const app = express();
@@ -35,7 +38,7 @@ const io = new Server(server);
 app.use(express.json()); // Middleware to parse JSON bodies
 
 // --- Rate Limiting Setup ---
-// Apply a general limiter to all API routes (optional, but good practice)
+// Apply a general limiter to all API routes
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per windowMs
@@ -46,13 +49,12 @@ const apiLimiter = rateLimit({
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
-// IMPORTANT: Apply general API limiter *before* specific ones if you want it to cover everything under /api
 app.use("/api", apiLimiter);
 
 // Apply a stricter limiter specifically for authentication routes
 const authLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 15, // Limit each IP to 15 login/register attempts per windowMs (Adjust as needed)
+  max: 15, // Limit each IP to 15 login/register attempts per windowMs
   message: {
     message:
       "Too many login/registration attempts from this IP, please try again after 10 minutes",
@@ -60,7 +62,6 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-// Apply stricter limiter specifically to the auth path
 app.use("/api/auth", authLimiter);
 
 // --- Game State ---
@@ -81,7 +82,6 @@ async function findUserByIdFromDB(userId) {
     if (!user) {
       return null;
     }
-    // Ensure inventory is a plain object if it was stored as a Map
     if (user.inventory instanceof Map) {
       user.inventory = Object.fromEntries(user.inventory);
     }
@@ -115,7 +115,13 @@ async function updateUserInDB(userId, updateData) {
 }
 
 // --- Graceful Shutdown Function ---
+let shutdownCalled = false; // Flag to prevent multiple shutdowns
 async function shutdown() {
+  if (shutdownCalled) {
+    console.log("Shutdown already in progress.");
+    return;
+  }
+  shutdownCalled = true;
   console.log("\nInitiating graceful shutdown...");
 
   // 1. Stop game loop
@@ -138,8 +144,9 @@ async function shutdown() {
   const savePromises = [];
   const activeAvatars = [];
   rooms.forEach((room) => {
-    Object.values(room.avatars).forEach((avatar) => {
-      if (avatar instanceof ServerAvatar) {
+    Object.values(room.avatars || {}).forEach((avatar) => {
+      // Check if it's a player avatar instance
+      if (avatar instanceof ServerAvatar && !avatar.isNPC) {
         activeAvatars.push(avatar);
       }
     });
@@ -164,6 +171,7 @@ async function shutdown() {
           lastY: Math.round(avatar.y),
           lastZ: avatar.z,
         };
+        // Use the helper function
         savePromises.push(updateUserInDB(userId, playerState));
       } catch (error) {
         console.error(
@@ -187,7 +195,12 @@ async function shutdown() {
     console.error("Error during bulk player state saving:", saveError);
   }
 
-  // 4. Room state saving is handled transactionally (on placement/pickup etc.)
+  // 4. Room state saving (optional, but furniture placement/pickup should handle this transactionally)
+  // If you needed to force-save all room layouts:
+  // const roomSavePromises = [];
+  // rooms.forEach((room) => roomSavePromises.push(room.saveStateToDB().catch(e => console.error(`Error saving room ${room.id}`, e))));
+  // await Promise.all(roomSavePromises);
+  // console.log("Room layout saving process completed.");
 
   // 5. Disconnect all clients
   console.log(
@@ -198,7 +211,7 @@ async function shutdown() {
     text: "Server is shutting down. Goodbye!",
     className: "server-msg",
   });
-  io.disconnectSockets(true);
+  io.disconnectSockets(true); // Force disconnect clients
 
   // 6. Close Socket.IO server
   io.close((err) => {
@@ -215,7 +228,7 @@ async function shutdown() {
         .catch((e) => console.error("Error disconnecting MongoDB:", e))
         .finally(() => {
           console.log("Shutdown complete.");
-          process.exit(0);
+          process.exit(0); // Exit cleanly
         });
     });
   });
@@ -224,7 +237,7 @@ async function shutdown() {
   setTimeout(() => {
     console.error("Graceful shutdown timed out after 5 seconds. Forcing exit.");
     process.exit(1);
-  }, 5000).unref();
+  }, 5000).unref(); // unref allows the program to exit if this is the only thing left
 } // --- End shutdown ---
 
 // --- ASYNC STARTUP FUNCTION ---
@@ -251,23 +264,70 @@ async function startServer() {
       console.error("Error loading npc_definitions.json:", error);
       // Continue startup without NPCs
     }
-    // --- End Load NPC Definitions --
+    // --- End Load NPC Definitions ---
 
-    // 2. Initialization and Room Loading from DB
-    console.log("Initializing Server Rooms from Database/Defaults...");
-    for (const roomId of SERVER_CONFIG.INITIAL_ROOMS) {
+    // 2. Initialization and Room Loading from DB (Corrected Logic)
+    console.log("Loading ALL Rooms from Database..."); // Changed log message
+    rooms.clear(); // Clear the map before loading
+    let loadedRoomIds = [];
+    try {
+      const dbRoomStates = await RoomState.find({}, "roomId").lean(); // Fetch all room IDs from DB
+      loadedRoomIds = dbRoomStates.map((doc) => doc.roomId);
+      console.log(
+        ` -> Found ${loadedRoomIds.length} room(s) defined in Database.`
+      );
+
+      // Add initial rooms from config if they weren't in the DB (e.g., for first run)
+      const initialConfigRooms = SERVER_CONFIG.INITIAL_ROOMS || [];
+      for (const configRoomId of initialConfigRooms) {
+        if (!loadedRoomIds.includes(configRoomId)) {
+          console.warn(
+            ` -> Room '${configRoomId}' from config not found in DB. Will attempt default load.`
+          );
+          loadedRoomIds.push(configRoomId); // Add it to the list to be processed
+        }
+      }
+    } catch (dbError) {
+      console.error("FATAL: Error fetching room list from Database:", dbError);
+      console.error(" -> Server cannot start without room list. Exiting.");
+      await mongoose.disconnect();
+      process.exit(1);
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    if (loadedRoomIds.length === 0 && SERVER_CONFIG.INITIAL_ROOMS.length > 0) {
+      console.warn(
+        "No rooms found in DB, attempting to load INITIAL_ROOMS from config/defaults..."
+      );
+      loadedRoomIds = [...SERVER_CONFIG.INITIAL_ROOMS]; // Use config rooms if DB is empty
+    }
+
+    // Now iterate through the combined list of room IDs found/configured
+    for (const roomId of loadedRoomIds) {
       if (!roomId || typeof roomId !== "string") {
-        console.warn("Skipping invalid/empty room ID in INITIAL_ROOMS.");
+        console.warn("Skipping invalid/empty room ID during load:", roomId);
+        failCount++;
         continue;
       }
       console.log(` - Initializing room: ${roomId}...`);
       try {
-        const roomInstance = new ServerRoom(roomId);
-        await roomInstance.loadStateFromDB();
-        rooms.set(roomId, roomInstance);
+        const roomInstance = new ServerRoom(roomId); // Creates instance, loads default layout
+        const loadedFromDB = await roomInstance.loadStateFromDB(); // Attempts to load layout/furni from DB
+        if (!loadedFromDB && !rooms.has(roomId)) {
+          // Check if loadStateFromDB failed AND it wasn't added by fallback logic inside loadStateFromDB
+          console.warn(
+            `   -> Failed to load existing state for room '${roomId}' from DB, using defaults or minimal layout.`
+          );
+          // loadStateFromDB should have handled setting a default layout if DB load failed
+        }
+        rooms.set(roomId, roomInstance); // Add to the live map
         console.log(`   Room '${roomId}' initialized successfully.`);
+        successCount++;
       } catch (roomLoadError) {
         console.error(`   ERROR initializing room '${roomId}':`, roomLoadError);
+        failCount++;
         if (roomId === SERVER_CONFIG.DEFAULT_ROOM_ID) {
           console.error(
             `FATAL: Failed to initialize default room '${roomId}'. Exiting.`
@@ -276,15 +336,31 @@ async function startServer() {
         }
       }
     }
-    if (rooms.size === 0) {
+
+    if (successCount === 0 && failCount > 0) {
       console.error(
-        "FATAL: No rooms were loaded/initialized successfully. Check INITIAL_ROOMS and database connection/state. Exiting."
+        `FATAL: No rooms were loaded/initialized successfully (${failCount} failures). Check DB connection/state and room definitions. Exiting.`
+      );
+      process.exit(1);
+    } else if (failCount > 0) {
+      console.warn(
+        `Finished initializing rooms. ${successCount} room(s) active, ${failCount} failed.`
+      );
+    } else {
+      console.log(
+        `Finished initializing rooms. ${successCount} room(s) active.`
+      );
+    }
+
+    // Ensure the default room actually exists after loading
+    if (!rooms.has(SERVER_CONFIG.DEFAULT_ROOM_ID)) {
+      console.error(
+        `FATAL: Default room '${SERVER_CONFIG.DEFAULT_ROOM_ID}' is not available after loading process. Exiting.`
       );
       process.exit(1);
     }
-    console.log(`Finished initializing rooms. ${rooms.size} room(s) active.`);
 
-    // --- Spawn NPCs ---
+    // --- Spawn NPCs (now happens *after* all rooms are loaded) ---
     console.log("Spawning NPCs...");
     let npcSpawnCount = 0;
     npcDefinitions.forEach((npcDef) => {
@@ -292,7 +368,7 @@ async function startServer() {
       if (targetRoom) {
         try {
           const npcInstance = new ServerNPC(npcDef, npcDef.roomId);
-          targetRoom.addAvatar(npcInstance); // Add NPC to room's avatar list for now
+          targetRoom.addAvatar(npcInstance); // Add NPC to room's avatar list
           npcSpawnCount++;
           console.log(
             ` -> Spawned NPC ${npcInstance.name} (ID: ${npcInstance.id}) in room ${targetRoom.id}`
@@ -317,12 +393,11 @@ async function startServer() {
       findUserByIdFromDB, // Pass DB function
       updateUserInDB // Pass DB function
     );
-    // Ensure handleChangeRoom is correctly referenced/exported if needed elsewhere
+    // Store handleChangeRoom for console use
     const handleChangeRoomFunc = SocketHandlers.handleChangeRoom;
     if (typeof handleChangeRoomFunc !== "function") {
-      // This check might be better placed inside modules that *use* it, like the console
-      console.warn(
-        "handleChangeRoom function from SocketHandlers module is not available globally (may affect console)."
+      console.error(
+        "CRITICAL: handleChangeRoom function from SocketHandlers is not available. Teleport command will fail."
       );
     }
 
@@ -334,12 +409,23 @@ async function startServer() {
     console.log(`Serving static files from: ${publicPath}`);
     app.use(express.static(publicPath));
     app.get("/api/config", (req, res) => {
-      res.json(SHARED_CONFIG);
+      res.json(SHARED_CONFIG); // Send SHARED_CONFIG only
     });
     app.get("/login", (req, res) => {
       res.sendFile(path.join(publicPath, "login.html"));
     });
-    app.get("/", (req, res) => {
+    // Fallback to index.html for the main app route and potentially others (if using client-side routing)
+    app.get("/*", (req, res) => {
+      // Check if the request looks like a file path or API call first
+      if (
+        req.path.includes(".") ||
+        req.path.startsWith("/api/") ||
+        req.path.startsWith("/socket.io/")
+      ) {
+        // Let other handlers or 404 deal with it
+        return res.status(404).send("Not Found");
+      }
+      // Otherwise, serve index.html for SPA routing
       res.sendFile(path.join(publicPath, "index.html"));
     });
 
@@ -386,6 +472,13 @@ async function startServer() {
             "Logged in from another location."
           );
           existingClient.socket.disconnect(true);
+          // Remove the old client entry immediately *before* adding new one
+          if (clients[existingClient.socket.id]) {
+            delete clients[existingClient.socket.id];
+            console.log(
+              ` -> Removed old client entry ${existingClient.socket.id}`
+            );
+          }
         }
 
         socket.userId = userId; // Attach persistent userId
@@ -427,15 +520,15 @@ async function startServer() {
           return;
         }
         try {
-          // Update room state (handles avatar movement, etc.)
+          // Update room state (handles player avatar movement, etc.)
           const updates = room.update(
             cappedDeltaTimeMs,
             io,
             handleChangeRoomFunc,
-            clients
-          ); // Pass changeRoom handler
+            clients // Pass global clients map
+          );
 
-          // Broadcast specific updates based on room.update results
+          // Broadcast specific player avatar updates based on room.update results
           if (updates.changedAvatars && updates.changedAvatars.length > 0) {
             updates.changedAvatars.forEach((avatarDTO) => {
               const targetRoomId = avatarDTO.roomId || roomId; // Use DTO's room or fallback
@@ -451,14 +544,14 @@ async function startServer() {
 
           // --- Update NPCs ---
           const changedNpcs = [];
-          const allObjectsInRoom = Object.values(room.avatars);
+          const allObjectsInRoom = Object.values(room.avatars || {}); // Get all objects in the room's map
 
           allObjectsInRoom.forEach((obj) => {
             if (obj instanceof ServerNPC) {
               // Check if it's an NPC
               if (obj.updateAI(cappedDeltaTimeMs, room)) {
-                // If updateAI changed state/pos/dir, add DTO to broadcast list
-                changedNpcs.push(obj.toDTO());
+                // If updateAI changed state/pos/dir
+                changedNpcs.push(obj.toDTO()); // Add DTO to broadcast list
               }
             }
           });
@@ -466,11 +559,10 @@ async function startServer() {
           // Broadcast NPC updates
           if (changedNpcs.length > 0) {
             changedNpcs.forEach((npcDTO) => {
-              // Use npc_update event for clarity
-              io.to(roomId).emit("npc_update", npcDTO);
+              io.to(roomId).emit("npc_update", npcDTO); // Use npc_update event
             });
           }
-          // --- ENd NPC Update ---
+          // --- End NPC Update ---
 
           // Furniture/other updates are usually broadcast directly by handlers now
         } catch (roomUpdateError) {
@@ -500,15 +592,21 @@ async function startServer() {
           rooms,
           io,
           clients,
-          shutdown,
-          handleChangeRoomFunc // Pass the room change handler
+          shutdown, // Pass shutdown function
+          handleChangeRoomFunc // Pass room change handler
         );
       })
       .on("error", (err) => {
+        // Add error handling for listen
         console.error(
           `FATAL: Server failed to listen on port ${SERVER_CONFIG.PORT}:`,
           err
         );
+        if (err.code === "EADDRINUSE") {
+          console.error(
+            " -> Port is already in use. Please ensure no other server is running on this port."
+          );
+        }
         // Attempt graceful shutdown if possible, otherwise force exit
         if (typeof shutdown === "function" && !shutdownCalled) {
           shutdownCalled = true;
@@ -519,9 +617,9 @@ async function startServer() {
               "Graceful shutdown timed out after listen error. Forcing exit."
             );
             process.exit(1);
-          }, 5000).unref(); // Timeout for shutdown
+          }, 5000).unref();
         } else {
-          process.exit(1); // Force exit if shutdown isn't available/already called
+          process.exit(1);
         }
       });
   } catch (error) {
@@ -547,7 +645,6 @@ startServer();
 process.on("SIGINT", shutdown); // Handle Ctrl+C
 process.on("SIGTERM", shutdown); // Handle kill signals
 
-let shutdownCalled = false; // Flag to prevent multiple shutdowns
 process.on("uncaughtException", (error, origin) => {
   console.error(`\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`);
   console.error(`UNCAUGHT EXCEPTION (${origin}):`, error);
