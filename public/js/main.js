@@ -24,6 +24,7 @@ import {
   updateAdminUI, // Keep for admin logic
   togglePanel, // Keep for panel logic if needed here (though maybe not)
 } from "./uiManager.js"; // Adjusted imports
+import { preloadAssets } from "./assetLoader.js";
 import { setupInputListeners, cleanupInputListeners } from "./inputHandler.js";
 import { startGameLoop, stopGameLoop } from "./gameLoop.js";
 import { loadSounds } from "./sounds.js";
@@ -86,6 +87,28 @@ async function initClient() {
     return;
   }
   showLoadingOverlay("Loading Assets..."); // Update message
+
+  // --- NEW Step 5.5: Gather and Preload Assets ---
+  const assetUrls = new Set();
+  // Collect furniture spritesheets
+  SHARED_CONFIG?.FURNITURE_DEFINITIONS?.forEach((def) => {
+    if (def.spriteSheetUrl) {
+      assetUrls.add(def.spriteSheetUrl);
+    }
+  });
+  // LATER: Add Avatar/NPC sprite URLs here
+  // SHARED_CONFIG?.AVATAR_SPRITE_DEFINITIONS?.forEach(def => { /* ... */ });
+  // npcDefinitions?.forEach(def => { /* ... */ }); // Need npc defs on client? Or part of SHARED_CONFIG?
+
+  // Define the progress update function
+  const updateLoadProgress = (loaded, total) => {
+    const percent = total > 0 ? Math.round((loaded / total) * 100) : 100;
+    showLoadingOverlay(`Loading Assets: ${loaded} / ${total} (${percent}%)`);
+  };
+
+  // Call preloadAssets and wait for it to complete
+  await preloadAssets(assetUrls, updateLoadProgress);
+  // --- End Asset Preloading ---
 
   // --- Step 6: Disable Interaction Buttons Initially ---
   // Buttons are now toggled, so disabling them might happen differently

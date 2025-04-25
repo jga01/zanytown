@@ -1,6 +1,7 @@
 import { ClientGameObject } from "./ClientGameObject.js";
 import { SHARED_CONFIG, CLIENT_CONFIG } from "../config.js";
-import { getScreenPos, shadeColor } from "../utils.js";
+import { getScreenPos, shadeColor, escapeHtml } from "../utils.js";
+import { getAsset } from "../assetLoader.js";
 
 export class ClientFurniture extends ClientGameObject {
   constructor(dto) {
@@ -19,32 +20,52 @@ export class ClientFurniture extends ClientGameObject {
     this.canRecolor = false; // From definition
     this.isSelected = false; // For edit mode selection highlight
 
+    this.spriteImage = null;
+    this.spriteInfo = null;
+
     this._updateDefinition(); // Find and cache definition
     this.update(dto); // Apply remaining properties (like state, color) and recalculate draw order
   }
 
   /** Finds and caches the furniture definition from SHARED_CONFIG. */
   _updateDefinition() {
-    if (!SHARED_CONFIG?.FURNITURE_DEFINITIONS) {
-      // console.warn(`Cannot update definition for ${this.id}: SHARED_CONFIG not ready.`);
+    // Ensure config and definition ID exist
+    if (!SHARED_CONFIG?.FURNITURE_DEFINITIONS || !this.definitionId) {
+      this.definition = null;
+      this.spriteInfo = null;
+      this.spriteImage = null;
       return;
     }
-    if (!this.definition && this.definitionId) {
-      this.definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
-        (def) => def.id === this.definitionId
-      );
-      if (this.definition) {
-        this.canRecolor = this.definition.canRecolor || false;
-        // Ensure door status matches definition if not provided in DTO
-        if (!this.isDoor && this.definition.isDoor) {
-          this.isDoor = true;
-          this.targetRoomId = this.definition.targetRoomId;
+    // Find definition
+    this.definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+      (def) => def.id === this.definitionId
+    );
+
+    if (this.definition) {
+      this.canRecolor = this.definition.canRecolor || false;
+      this.isDoor = this.definition.isDoor || false; // Ensure correct door status
+      this.targetRoomId = this.definition.targetRoomId || null;
+      // --- Get Sprite Info ---
+      this.spriteInfo = this.definition.sprite || null;
+      if (this.definition.spriteSheetUrl) {
+        // Assumes imageCache is globally accessible or passed in
+        this.spriteImage = getAsset(this.definition.spriteSheetUrl);
+        if (!this.spriteImage) {
+          console.warn(
+            `Sprite image not found in cache for URL: ${this.definition.spriteSheetUrl}`
+          );
+          // Assign a placeholder?
         }
       } else {
-        console.warn(
-          `ClientFurniture: Definition not found for ID ${this.definitionId}`
-        );
+        this.spriteImage = null; // No sprite sheet defined
       }
+    } else {
+      console.warn(
+        `ClientFurniture: Definition not found for ID ${this.definitionId}`
+      );
+      this.definition = null;
+      this.spriteInfo = null;
+      this.spriteImage = null;
     }
   }
 
@@ -77,222 +98,144 @@ export class ClientFurniture extends ClientGameObject {
 
   /** Draws the furniture on the canvas. */
   draw(ctx, camera) {
+    // --- Essential Checks ---
     if (
-      !this.definition ||
       !this.isVisible ||
-      !SHARED_CONFIG ||
-      !CLIENT_CONFIG ||
+      !this.spriteImage ||
+      !this.spriteInfo ||
       !ctx ||
-      !camera
+      !camera ||
+      !SHARED_CONFIG ||
+      !CLIENT_CONFIG
     ) {
-      // console.warn(`Furniture draw skipped for ${this.id}: missing dependencies.`);
+      // Optionally draw a fallback rectangle if sprite is missing but definition exists
+      // if (this.definition && ctx && camera) { /* draw fallback shape */ }
+      // console.warn(`Furniture draw skipped for ${this.id}: missing dependencies or assets.`);
       return;
     }
 
-    const definition = this.definition;
-    const screenPos = getScreenPos(this.visualX, this.visualY);
-    const zoom = camera.zoom;
+    // --- Determine Source Frame (sx, sy, sw, sh) ---
+    let frameData = { ...(this.spriteInfo.base || {}) }; // Start with base frame, create copy
 
-    // Calculate drawing dimensions and Z offset
-    const baseDrawWidth =
-      SHARED_CONFIG.TILE_WIDTH_HALF * (definition.width || 1) * zoom * 1.1; // Slightly wider for visual effect
-    const visualHeightFactor = definition.isFlat
-      ? 0.1
-      : definition.stackHeight
-      ? definition.stackHeight * 1.5
-      : 1.0;
-    const baseDrawHeight =
-      SHARED_CONFIG.TILE_HEIGHT_HALF * 3 * visualHeightFactor * zoom; // Approx visual height
-    const zOffsetPx = this.visualZ * CLIENT_CONFIG.VISUAL_Z_FACTOR * zoom;
-
-    // Calculate Y for the *top* edge of the main graphic (adjusting for visual height and Z)
-    const drawY =
-      screenPos.y -
-      baseDrawHeight +
-      SHARED_CONFIG.TILE_HEIGHT_HALF * zoom -
-      zOffsetPx;
-    const drawX = screenPos.x - baseDrawWidth / 2; // Center X
-
-    // Determine fill/stroke colors
-    let baseFill = this.colorOverride || definition.color || "#8B4513";
+    // Apply state variation (e.g., lamp on/off)
     if (
-      !this.colorOverride &&
-      definition.id === "light_simple" &&
-      definition.canUse
+      this.spriteInfo.states &&
+      this.state &&
+      this.spriteInfo.states[this.state]
     ) {
-      baseFill = this.state === "on" ? "#FFFF00" : "#AAAAAA"; // Lamp state color
+      frameData = { ...frameData, ...this.spriteInfo.states[this.state] }; // Merge state info over base/previous
     }
-    let baseStroke = shadeColor(baseFill, -50);
 
-    // --- Save context and apply base style ---
-    ctx.save();
-    const applyStyle = (style) => {
-      ctx.fillStyle = style.fill || baseFill;
-      ctx.strokeStyle = style.stroke || baseStroke;
-      ctx.lineWidth = style.lineWidth || Math.max(1, 1.5 * zoom);
-      ctx.globalAlpha = style.alpha ?? 1.0;
-    };
-    applyStyle({ fill: baseFill, stroke: baseStroke }); // Apply initial style
+    // Apply rotation variation
+    // Option 1: Using spriteInfo.rotations array (more explicit)
+    if (this.spriteInfo.rotations && this.spriteInfo.rotations[this.rotation]) {
+      frameData = { ...frameData, ...this.spriteInfo.rotations[this.rotation] }; // Merge rotation info
+    }
+    // Option 2: Using sequential frames (example assuming horizontal strip for N/S/E/W)
+    // else if (this.spriteInfo.frameWidth && this.rotation % 2 === 0 && this.rotation < 8) { // Only handle cardinal for simple example
+    //     const baseFrameX = this.spriteInfo.base?.x ?? 0;
+    //     const rotationIndexMap = { 0: 0, 2: 1, 4: 2, 6: 3 }; // Map direction to frame index offset
+    //     const frameIndex = rotationIndexMap[this.rotation] ?? 0;
+    //     frameData.x = baseFrameX + (frameIndex * this.spriteInfo.frameWidth);
+    //     // Note: This assumes frameWidth/height/anchor are the same for all rotations.
+    //     // If they differ, this logic needs to be more complex or use the rotations array method.
+    // }
 
-    // --- Define Shape Path Function (Simplified representations) ---
-    const defineShapePath = () => {
-      ctx.beginPath();
-      if (definition.isFlat) {
-        // Draw flat diamond centered on visual position, offset by Z
-        const currentZOffsetPx =
-          this.visualZ * CLIENT_CONFIG.VISUAL_Z_FACTOR * zoom;
-        const halfW =
-          SHARED_CONFIG.TILE_WIDTH_HALF * (definition.width || 1) * zoom;
-        const halfH =
-          SHARED_CONFIG.TILE_HEIGHT_HALF * (definition.height || 1) * zoom;
-        ctx.moveTo(screenPos.x, screenPos.y - halfH - currentZOffsetPx);
-        ctx.lineTo(screenPos.x + halfW, screenPos.y - currentZOffsetPx);
-        ctx.lineTo(screenPos.x, screenPos.y + halfH - currentZOffsetPx);
-        ctx.lineTo(screenPos.x - halfW, screenPos.y - currentZOffsetPx);
-        ctx.closePath();
-      } else if (definition.canSit) {
-        // Draw basic chair (seat + back based on rotation)
-        const seatHeight = baseDrawHeight * 0.4;
-        const backHeight = baseDrawHeight * 0.6;
-        const seatWidth = baseDrawWidth;
-        // Seat rectangle path
-        ctx.rect(drawX, drawY + backHeight, seatWidth, seatHeight);
-        // Backrest rectangle path (simplified rotation logic)
-        const backWidthFactor = 0.8;
-        const backThicknessFactor = 0.15;
-        const backVisualWidth = seatWidth * backWidthFactor;
-        const backVisualThickness = seatWidth * backThicknessFactor;
-        let backDrawX = drawX + (seatWidth - backVisualWidth) / 2;
-        let actualBackWidth = backVisualWidth;
-        let actualBackHeight = backHeight;
-        // Adjust based on cardinal directions for simplicity
-        if (this.rotation === SHARED_CONFIG.DIRECTION_EAST) {
-          // Facing East (back is West)
-          backDrawX = drawX + seatWidth * (1 - backThicknessFactor - 0.05); // Right side
-          actualBackWidth = backVisualThickness;
-        } else if (this.rotation === SHARED_CONFIG.DIRECTION_WEST) {
-          // Facing West (back is East)
-          backDrawX = drawX + seatWidth * 0.05; // Left side
-          actualBackWidth = backVisualThickness;
-        } else if (this.rotation === SHARED_CONFIG.DIRECTION_NORTH) {
-          // Facing North (back is South)
-          // Drawn as full width back (like South) in this simple representation
-        }
-        ctx.rect(backDrawX, drawY, actualBackWidth, actualBackHeight);
-      } else if (definition.id === "light_simple") {
-        // Draw basic lamp shape (base, pole, shade)
-        const lampBaseHeight = baseDrawHeight * 0.2;
-        const lampPoleHeight = baseDrawHeight * 0.6;
-        const lampShadeHeight = baseDrawHeight * 0.2;
-        const lampWidth = baseDrawWidth * 0.5;
-        const lampX = drawX + (baseDrawWidth - lampWidth) / 2;
-        // Base path
-        ctx.rect(
-          lampX,
-          drawY + lampPoleHeight + lampShadeHeight,
-          lampWidth,
-          lampBaseHeight
-        );
-        // Pole path
-        ctx.rect(
-          lampX + lampWidth * 0.3,
-          drawY + lampShadeHeight,
-          lampWidth * 0.4,
-          lampPoleHeight
-        );
-        // Shade path (trapezoid)
-        ctx.moveTo(lampX, drawY + lampShadeHeight);
-        ctx.lineTo(lampX + lampWidth, drawY + lampShadeHeight);
-        ctx.lineTo(lampX + lampWidth * 0.8, drawY);
-        ctx.lineTo(lampX + lampWidth * 0.2, drawY);
-        ctx.closePath();
-      } else if (this.isDoor) {
-        // Generic door drawing
-        // Draw basic door frame rectangle
-        ctx.rect(
-          drawX + baseDrawWidth * 0.1,
-          drawY,
-          baseDrawWidth * 0.8,
-          baseDrawHeight
-        );
-        // Inner panel (drawn separately after fill/stroke)
-      } else {
-        // Default: Draw a simple box shape
-        ctx.rect(drawX, drawY, baseDrawWidth, baseDrawHeight);
-      }
-    };
-    // --- End Shape Path Function ---
+    const sx = frameData.x ?? 0;
+    const sy = frameData.y ?? 0;
+    const sw = frameData.w ?? 0; // Source width from sprite sheet
+    const sh = frameData.h ?? 0; // Source height from sprite sheet
 
-    // Fill and Stroke the main shape
-    defineShapePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Specific details after base shape
-    if (definition.id === "light_simple" && this.state === "on") {
-      // Draw light cone if state is 'on'
-      ctx.save();
-      ctx.fillStyle = "rgba(255, 255, 180, 0.25)"; // Semi-transparent yellow light
-      ctx.beginPath();
-      const lampWidth = baseDrawWidth * 0.5;
-      const lampX = drawX + (baseDrawWidth - lampWidth) / 2;
-      const lampShadeHeight = baseDrawHeight * 0.2;
-      ctx.moveTo(lampX + lampWidth * 0.1, drawY + lampShadeHeight);
-      ctx.lineTo(lampX + lampWidth * 0.9, drawY + lampShadeHeight);
-      ctx.lineTo(
-        lampX + lampWidth + 20 * zoom,
-        drawY + baseDrawHeight + 30 * zoom
-      ); // Wider at bottom
-      ctx.lineTo(lampX - 20 * zoom, drawY + baseDrawHeight + 30 * zoom);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    } else if (this.isDoor) {
-      // Draw darker inner panel for doors
-      ctx.fillStyle = shadeColor(baseFill, -20);
-      // Use same drawX, drawY, baseDrawWidth, baseDrawHeight
-      ctx.fillRect(
-        drawX + baseDrawWidth * 0.2,
-        drawY + baseDrawHeight * 0.1,
-        baseDrawWidth * 0.6,
-        baseDrawHeight * 0.8
+    // --- Validate Source ---
+    if (sw <= 0 || sh <= 0) {
+      console.warn(
+        `Invalid frame dimensions (w=${sw}, h=${sh}) for furniture ${this.id} (State: ${this.state}, Rot: ${this.rotation})`
       );
+      return; // Don't draw if source dimensions are invalid
     }
 
-    // Draw Selection Highlight if selected in edit mode
-    if (this.isSelected && CLIENT_CONFIG) {
-      // Check CLIENT_CONFIG exists
-      const highlightStyle = {
-        fill: "none", // No fill for highlight outline
-        stroke: CLIENT_CONFIG.FURNI_SELECT_HIGHLIGHT_COLOR,
-        lineWidth: Math.max(2, 3 * zoom),
-        alpha: 0.8,
-      };
-      applyStyle(highlightStyle); // Apply highlight style
-      defineShapePath(); // Redefine the path for the highlight stroke
-      ctx.stroke();
+    // --- Calculate Destination Size (dw, dh) ---
+    const dw = sw * camera.zoom; // Destination width on canvas
+    const dh = sh * camera.zoom; // Destination height on canvas
+
+    // --- Calculate Destination Position (dx, dy) ---
+    // 1. Get base screen position for the logical world coordinates
+    const screenPos = getScreenPos(this.visualX, this.visualY);
+
+    // 2. Calculate Z offset in pixels
+    const zOffsetFactor =
+      CLIENT_CONFIG.VISUAL_Z_FACTOR ?? SHARED_CONFIG.TILE_HEIGHT_HALF * 1.5;
+    const zOffsetPx = (this.visualZ || 0) * zOffsetFactor * camera.zoom;
+
+    // 3. Determine anchor point relative to sprite frame, scaled by zoom
+    // Anchor point defines where the sprite's origin is relative to the logical grid point.
+    // Use anchor from the specific frame if defined, fallback to spriteInfo anchor, fallback to default (bottom-center).
+    const anchorX = frameData.anchor?.x ?? this.spriteInfo.anchor?.x ?? sw / 2;
+    const anchorY = frameData.anchor?.y ?? this.spriteInfo.anchor?.y ?? sh; // Default to bottom
+    const anchorOffsetX = anchorX * camera.zoom;
+    const anchorOffsetY = anchorY * camera.zoom;
+
+    // 4. Calculate final top-left drawing position (dx, dy)
+    const dx = screenPos.x - anchorOffsetX;
+    const dy = screenPos.y - anchorOffsetY - zOffsetPx; // Z offset lifts the sprite vertically
+
+    // --- Draw the Sprite ---
+    ctx.save();
+    try {
+      // Tinting - Method 1: globalCompositeOperation (simpler, less accurate colors)
+      // if (this.canRecolor && this.colorOverride) {
+      //     ctx.drawImage(this.spriteImage, sx, sy, sw, sh, dx, dy, dw, dh); // Draw base image
+      //     ctx.globalCompositeOperation = 'source-atop'; // Draw only where base image has pixels
+      //     ctx.fillStyle = this.colorOverride;
+      //     ctx.fillRect(dx, dy, dw, dh); // Fill with tint color
+      //     ctx.globalCompositeOperation = 'source-over'; // Reset composite mode
+      // } else {
+      //     // Draw normally if no tint needed
+      ctx.drawImage(this.spriteImage, sx, sy, sw, sh, dx, dy, dw, dh);
+      // }
+      // Note: More advanced tinting might involve creating an offscreen canvas,
+      // manipulating pixel data, or using WebGL shaders. Keep it simple for now.
+    } catch (e) {
+      console.error(
+        `Error drawing furniture sprite ${this.id} (${this.definitionId}):`,
+        e
+      );
+      // Optionally draw a red box as an error indicator
+      ctx.fillStyle = "red";
+      ctx.fillRect(dx, dy, dw || 20, dh || 20);
     }
 
-    // Draw Door Name Text
+    // --- Draw Highlights / Other Overlays (after sprite) ---
+    // Example: Selection highlight in edit mode
+    if (this.isSelected && CLIENT_CONFIG.FURNI_SELECT_HIGHLIGHT_COLOR) {
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = CLIENT_CONFIG.FURNI_SELECT_HIGHLIGHT_COLOR;
+      ctx.lineWidth = Math.max(2, 3 * camera.zoom); // Thicker highlight
+      ctx.strokeRect(dx, dy, dw, dh); // Draw bounding box highlight
+      ctx.globalAlpha = 1.0;
+    }
+    // Example: Hover highlight (less intrusive) - could be handled by uiManager's highlights
+    // if (this.isHovered && CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR) {
+    //     ctx.fillStyle = CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR;
+    //     ctx.fillRect(dx, dy, dw, dh);
+    // }
+
+    // Draw Door Name Text (if applicable)
     if (this.isDoor && this.targetRoomId) {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.8)"; // Dark text fill
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.7)"; // Light text outline
-      ctx.lineWidth = 2;
-      ctx.font = `bold ${Math.max(7, 9 * zoom)}px Verdana`;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.9)"; // White text fill
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.8)"; // Black text outline
+      ctx.lineWidth = Math.max(1, 2 * camera.zoom);
+      ctx.font = `bold ${Math.max(7, 9 * camera.zoom)}px Verdana`;
       ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      const hintText = `-> ${this.targetRoomId}`;
-      const textY = drawY - 5 * zoom; // Position above the furniture's drawn top edge
-      ctx.strokeText(hintText, screenPos.x, textY); // Outline first
-      ctx.fillText(hintText, screenPos.x, textY); // Fill second
-      // Reset alignment/baseline if needed elsewhere (good practice)
-      ctx.textAlign = "start";
-      ctx.textBaseline = "alphabetic";
+      ctx.textBaseline = "bottom"; // Align text bottom to position above sprite
+      const hintText = `-> ${escapeHtml(this.targetRoomId)}`;
+      const textY = dy - 5 * camera.zoom; // Position slightly above the drawn sprite's top edge
+      ctx.strokeText(hintText, dx + dw / 2, textY); // Outline first
+      ctx.fillText(hintText, dx + dw / 2, textY); // Fill second
     }
 
-    ctx.restore(); // Restore context state
+    ctx.restore(); // Restore context state (like globalAlpha)
   }
-
   /** Helper to get grid coordinates occupied by this furniture based on its definition and position. */
   getOccupiedTiles() {
     // Use the cached definition if available

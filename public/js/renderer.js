@@ -5,6 +5,7 @@ import { ClientFurniture } from "./gameObjects/ClientFurniture.js";
 import { ClientAvatar } from "./gameObjects/ClientAvatar.js";
 import { ClientTile } from "./gameObjects/ClientTile.js";
 import { getClientStackHeightAt } from "./uiManager.js"; // Placement ghost needs stack height calc
+import { getAsset } from "../js/assetLoader.js";
 
 let ctx = null;
 let canvas = null;
@@ -259,93 +260,91 @@ function drawPlacementGhost() {
   const definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
     (d) => d.id === uiState.editMode.selectedInventoryItemId
   );
-  if (!definition) return; // Need definition to draw
+  if (!definition || !definition.sprite || !definition.spriteSheetUrl) {
+    // Fallback to simple geometric if no sprite info? Or just don't draw?
+    console.warn(
+      `No sprite info for placement ghost: ${uiState.editMode.selectedInventoryItemId}`
+    );
+    return;
+  }
+  const spriteInfo = definition.sprite;
+  const spriteImage = getAsset(definition.spriteSheetUrl);
+  if (!spriteImage) {
+    console.warn(
+      `Sprite image not loaded for placement ghost: ${definition.spriteSheetUrl}`
+    );
+    return; // Cannot draw without image
+  }
 
   const gridX = gameState.highlightedTile.x;
   const gridY = gameState.highlightedTile.y;
+  const ghostZ =
+    getClientStackHeightAt(gridX, gridY) + (definition.zOffset || 0);
+  const rotation = uiState.editMode.placementRotation;
 
-  // Estimate Z position based on client-side stack calculation
-  const estimatedBaseZ = getClientStackHeightAt(gridX, gridY); // Use helper from uiManager
-  const ghostZ = estimatedBaseZ + (definition.zOffset || 0);
+  // --- Determine Frame and Anchor (Similar to ClientFurniture.draw) ---
+  let frameData = { ...(spriteInfo.base || {}) };
+  let anchorData = { ...(spriteInfo.anchor || { x: 0, y: 0 }) };
+  const rotationKey = String(rotation);
+  if (spriteInfo.rotations && spriteInfo.rotations[rotationKey]) {
+    const rotationFrame = spriteInfo.rotations[rotationKey];
+    frameData = { ...frameData, ...rotationFrame };
+    anchorData = { ...anchorData, ...(rotationFrame.anchor || {}) };
+  }
+  // Add convention logic here if using Option B
 
-  const currentCtx = ctx; // Use the main context
-  const currentCamera = camera; // Use the main camera state
+  const sx = frameData.x ?? 0;
+  const sy = frameData.y ?? 0;
+  const sw = frameData.w ?? 0;
+  const sh = frameData.h ?? 0;
 
-  const screenPos = getScreenPos(gridX, gridY); // Util uses camera state
+  if (sw <= 0 || sh <= 0) return; // Invalid frame
+
+  const anchorX = anchorData.x ?? sw / 2;
+  const anchorY = anchorData.y ?? sh;
+  // --- End Frame/Anchor Determination ---
+
+  const currentCtx = ctx;
+  const currentCamera = camera;
+  const screenPos = getScreenPos(gridX, gridY);
   const zoom = currentCamera.zoom;
   const zOffsetPx = ghostZ * CLIENT_CONFIG.VISUAL_Z_FACTOR * zoom;
 
+  const dw = sw * zoom;
+  const dh = sh * zoom;
+  const anchorOffsetX = anchorX * zoom;
+  const anchorOffsetY = anchorY * zoom;
+  const dx = screenPos.x - anchorOffsetX;
+  const dy = screenPos.y - anchorOffsetY - zOffsetPx;
+
   // Determine appearance based on validity
   const alpha = uiState.editMode.placementValid ? 0.6 : 0.3;
-  const color = uiState.editMode.placementValid
-    ? definition.color || "#8B4513" // Use definition color or default brown
-    : CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR; // Red for invalid
-
-  // --- Calculate drawing dimensions similar to ClientFurniture.draw ---
-  const baseDrawWidth =
-    SHARED_CONFIG.TILE_WIDTH_HALF * (definition.width || 1) * zoom * 1.1;
-  const visualHeightFactor = definition.isFlat
-    ? 0.1
-    : definition.stackHeight
-    ? definition.stackHeight * 1.5
-    : 1.0;
-  const baseDrawHeight =
-    SHARED_CONFIG.TILE_HEIGHT_HALF * 3 * visualHeightFactor * zoom;
-  const drawY =
-    screenPos.y -
-    baseDrawHeight +
-    SHARED_CONFIG.TILE_HEIGHT_HALF * zoom -
-    zOffsetPx;
-  const drawX = screenPos.x - baseDrawWidth / 2;
+  const tintColor = uiState.editMode.placementValid
+    ? null
+    : "rgba(255, 0, 0, 0.5)"; // Red tint for invalid
 
   currentCtx.save();
   currentCtx.globalAlpha = alpha;
-  currentCtx.fillStyle = color;
-  currentCtx.strokeStyle = shadeColor(color, -50);
-  currentCtx.lineWidth = Math.max(1, 1.5 * zoom);
-  currentCtx.beginPath();
 
-  // --- Draw Ghost Shape (Simplified versions) ---
-  if (definition.isFlat) {
-    const hW = SHARED_CONFIG.TILE_WIDTH_HALF * (definition.width || 1) * zoom;
-    const hH = SHARED_CONFIG.TILE_HEIGHT_HALF * (definition.height || 1) * zoom;
-    currentCtx.moveTo(screenPos.x, screenPos.y - hH - zOffsetPx);
-    currentCtx.lineTo(screenPos.x + hW, screenPos.y - zOffsetPx);
-    currentCtx.lineTo(screenPos.x, screenPos.y + hH - zOffsetPx);
-    currentCtx.lineTo(screenPos.x - hW, screenPos.y - zOffsetPx);
-    currentCtx.closePath();
-  } else if (definition.isDoor) {
-    currentCtx.rect(
-      drawX + baseDrawWidth * 0.1,
-      drawY,
-      baseDrawWidth * 0.8,
-      baseDrawHeight
-    );
-  } else {
-    // Default box shape
-    currentCtx.rect(drawX, drawY, baseDrawWidth, baseDrawHeight);
-  }
-  currentCtx.fill();
-  currentCtx.stroke();
-
-  // --- Draw Rotation Indicator Arrow (if not flat) ---
-  if (!definition.isFlat) {
-    currentCtx.fillStyle = "rgba(255, 255, 255, 0.7)";
-    currentCtx.translate(screenPos.x, screenPos.y - zOffsetPx); // Translate to tile center (adjusting for Z)
-    const angleRad = (uiState.editMode.placementRotation / 4) * Math.PI; // Convert direction 0-7 to radians
-    currentCtx.rotate(angleRad);
-    // Draw a simple triangle pointing East (direction 0) before rotation
-    const arrowL = SHARED_CONFIG.TILE_HEIGHT_HALF * zoom * 0.8;
-    const arrowW = arrowL * 0.6;
-    currentCtx.beginPath();
-    currentCtx.moveTo(arrowL * 0.6, 0); // Point
-    currentCtx.lineTo(0, -arrowW / 2); // Base corner 1
-    currentCtx.lineTo(0, arrowW / 2); // Base corner 2
-    currentCtx.closePath();
-    currentCtx.fill();
+  // Draw the actual sprite semi-transparently
+  try {
+    currentCtx.drawImage(spriteImage, sx, sy, sw, sh, dx, dy, dw, dh);
+  } catch (e) {
+    console.error("Error drawing placement ghost sprite:", e);
+    // Fallback rectangle on error
+    currentCtx.fillStyle = "rgba(255, 0, 0, 0.5)"; // Red semi-transparent
+    currentCtx.fillRect(dx, dy, dw, dh);
   }
 
-  currentCtx.restore(); // Restore context state
+  // Apply tint for invalid placement
+  if (tintColor) {
+    currentCtx.globalCompositeOperation = "source-atop"; // Tint only the drawn sprite pixels
+    currentCtx.fillStyle = tintColor;
+    currentCtx.fillRect(dx, dy, dw, dh);
+    currentCtx.globalCompositeOperation = "source-over"; // Reset blend mode
+  }
+
+  currentCtx.restore();
 }
 
 /** Resizes the canvas drawing buffer and resets context properties. */
