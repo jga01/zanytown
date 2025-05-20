@@ -440,6 +440,11 @@ export function resetUIState() {
   uiState.editMode.placementValid = false;
   uiState.editMode.placementRotation = 0;
   uiState.activeRecolorFurniId = null;
+  // For furniture dragging
+  uiState.editMode.draggedFurnitureId = null;
+  uiState.editMode.dragStartX = 0;
+  uiState.editMode.dragStartY = 0;
+  uiState.editMode.dragOriginalZ = 0;
 
   // Update UI related to edit mode
   updateInventorySelection();
@@ -1258,10 +1263,21 @@ export function setEditState(newState) {
   }
   if (
     oldState === CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI &&
-    newState !== CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI
+    newState !== CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI &&
+    newState !== "dragging_furni" // Don't deselect if transitioning to drag
   ) {
     setSelectedFurniture(null); // Deselect furniture when leaving this state
     hideRecolorPanel(); // Ensure recolor panel is hidden
+  }
+  // Cleanup when leaving dragging state
+  if (oldState === "dragging_furni" && newState !== "dragging_furni") {
+    uiState.editMode.draggedFurnitureId = null;
+    uiState.editMode.dragStartX = 0;
+    uiState.editMode.dragStartY = 0;
+    uiState.editMode.dragOriginalZ = 0;
+    // Potentially show the original furniture again if it was hidden by renderer
+    // This might involve telling the renderer to redraw or unhide.
+    // For now, game state itself isn't changing the furniture's actual position.
   }
 
   // Update UI elements based on the new state
@@ -1270,6 +1286,65 @@ export function setEditState(newState) {
   updateHighlights(); // Update tile/furniture highlights
   hideContextMenu(); // Hide context menu on state change
 }
+
+// --- Furniture Dragging ---
+const EDIT_STATE_DRAGGING_FURNI = "dragging_furni"; // Define state string
+
+/** Initiates dragging for the currently selected furniture. */
+export function startDraggingSelectedFurniture(startGridX, startGridY) {
+  if (
+    !uiState.isEditMode ||
+    uiState.editMode.state !== CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI ||
+    !uiState.editMode.selectedFurnitureId
+  ) {
+    console.error(
+      "startDraggingSelectedFurniture: Conditions not met.",
+      uiState.editMode.state,
+      uiState.editMode.selectedFurnitureId
+    );
+    return;
+  }
+
+  const furniToDrag = gameState.furniture[uiState.editMode.selectedFurnitureId];
+  if (!furniToDrag) {
+    console.error("startDraggingSelectedFurniture: Selected furniture not found in gameState.");
+    setSelectedFurniture(null); // Clear selection if invalid
+    return;
+  }
+
+  uiState.editMode.draggedFurnitureId = uiState.editMode.selectedFurnitureId;
+  uiState.editMode.dragStartX = startGridX;
+  uiState.editMode.dragStartY = startGridY;
+  uiState.editMode.dragOriginalZ = furniToDrag.z; // Store original Z
+
+  // The selectedFurnitureId remains the same, as it's what we are dragging
+  // No need to call setSelectedFurniture() again if it's already selected.
+
+  setEditState(EDIT_STATE_DRAGGING_FURNI); // Transition to dragging state
+  playSound("pickup"); // Use pickup sound for now
+  console.log(
+    `Started dragging ${uiState.editMode.draggedFurnitureId} from (${startGridX},${startGridY})`
+  );
+  // The renderer will need to know to hide the original furniture piece
+  // and draw a ghost based on draggedFurnitureId and current mouse grid pos.
+}
+
+/** Cleans up state after furniture dragging is finished. */
+export function stopDraggingFurniture() {
+  console.log(
+    `Stopping drag for ${uiState.editMode.draggedFurnitureId || "unknown furni"}`
+  );
+  uiState.editMode.draggedFurnitureId = null;
+  uiState.editMode.dragStartX = 0;
+  uiState.editMode.dragStartY = 0;
+  uiState.editMode.dragOriginalZ = 0;
+  // No need to explicitly change state here, handleMouseUp will do that.
+  // updateHighlights() will be called by the game loop and will stop drawing the ghost.
+  // The renderer should automatically show the original furniture if it was hidden.
+  updateHighlights(); // Explicitly update highlights to remove ghost immediately
+  updateUICursor(); // Reset cursor if needed
+}
+// --- End Furniture Dragging ---
 
 /** Sets the currently selected inventory item for placement. */
 export function setSelectedInventoryItem(definitionId) {
@@ -2004,82 +2079,113 @@ export function updateHighlights() {
 
   // --- Edit Mode Highlighting ---
   if (uiState.isEditMode) {
-    // Placing Item State
-    if (
-      uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_PLACING &&
-      uiState.editMode.selectedInventoryItemId
-    ) {
-      const definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
-        (d) => d.id === uiState.editMode.selectedInventoryItemId
-      );
-      if (definition) {
-        uiState.editMode.placementValid = isClientPlacementValid(
-          definition,
-          gridPos.x,
-          gridPos.y
-        );
-        const color = uiState.editMode.placementValid
-          ? CLIENT_CONFIG.FURNI_PLACE_HIGHLIGHT_COLOR
-          : CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR;
-        // Highlight all occupied tiles for the ghost
-        const tempFurniProto = {
-          x: gridPos.x,
-          y: gridPos.y,
-          definition: definition,
-          getOccupiedTiles: ClientFurniture.prototype.getOccupiedTiles,
-        };
-        tempFurniProto
-          .getOccupiedTiles()
-          .forEach((tp) => setTileHighlight(tp.x, tp.y, color));
-      } else {
-        uiState.editMode.placementValid = false; // Cannot place if definition missing
-        setTileHighlight(
-          gridPos.x,
-          gridPos.y,
-          CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR
-        ); // Highlight single tile red
-      }
-    }
-    // Navigate/Selected Furniture State
-    else {
-      const hoveredF = getTopmostFurnitureAtScreen(screenPos.x, screenPos.y);
-      const player = gameState.myAvatarId
-        ? gameState.avatars[gameState.myAvatarId]
-        : null;
-      const canLayoutEdit =
-        player?.isAdmin &&
-        uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_NAVIGATE;
-
-      if (canLayoutEdit) {
-        // Highlight single tile for layout painting
-        setTileHighlight(
-          gridPos.x,
-          gridPos.y,
-          CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR
-        );
-      } else if (
-        hoveredF &&
-        hoveredF.id !== uiState.editMode.selectedFurnitureId
-      ) {
-        // Highlight hovered furniture (if not already selected)
-        hoveredF
-          .getOccupiedTiles()
-          .forEach((tp) =>
-            setTileHighlight(
-              tp.x,
-              tp.y,
-              CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR
-            )
+    switch (uiState.editMode.state) {
+      case CLIENT_CONFIG.EDIT_STATE_PLACING:
+        if (uiState.editMode.selectedInventoryItemId) {
+          const definition = SHARED_CONFIG.FURNITURE_DEFINITIONS.find(
+            (d) => d.id === uiState.editMode.selectedInventoryItemId
           );
-      } else if (!hoveredF && gameState.highlightedTile) {
-        // Highlight the empty tile under cursor slightly
-        setTileHighlight(
-          gameState.highlightedTile.x,
-          gameState.highlightedTile.y,
-          CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR
-        ); // More transparent
-      }
-      // Note: Selected furniture highlighting is handled by the ClientFurniture.draw method using `furni.isSelected`
+          if (definition) {
+            uiState.editMode.placementValid = isClientPlacementValid(
+              definition,
+              gridPos.x,
+              gridPos.y
+            );
+            const color = uiState.editMode.placementValid
+              ? CLIENT_CONFIG.FURNI_PLACE_HIGHLIGHT_COLOR
+              : CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR;
+            const tempFurniProto = {
+              x: gridPos.x,
+              y: gridPos.y,
+              definition: definition,
+              getOccupiedTiles: ClientFurniture.prototype.getOccupiedTiles,
+            };
+            tempFurniProto
+              .getOccupiedTiles()
+              .forEach((tp) => setTileHighlight(tp.x, tp.y, color));
+          } else {
+            uiState.editMode.placementValid = false;
+            setTileHighlight(
+              gridPos.x,
+              gridPos.y,
+              CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR
+            );
+          }
+        }
+        break;
+
+      case EDIT_STATE_DRAGGING_FURNI: // "dragging_furni"
+        if (uiState.editMode.draggedFurnitureId) {
+          const draggedFurni =
+            gameState.furniture[uiState.editMode.draggedFurnitureId];
+          if (draggedFurni && draggedFurni.definition) {
+            // Use the original furniture's definition for the ghost
+            uiState.editMode.placementValid = isClientPlacementValid(
+              draggedFurni.definition,
+              gridPos.x,
+              gridPos.y,
+              uiState.editMode.draggedFurnitureId // Pass ID to ignore self in collision
+            );
+            const color = uiState.editMode.placementValid
+              ? CLIENT_CONFIG.FURNI_MOVE_HIGHLIGHT_COLOR // Potentially a different color for move
+              : CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR;
+
+            // Create a temporary representation for highlighting occupied tiles
+            const tempGhostProto = {
+              x: gridPos.x, // Ghost is at mouse grid position
+              y: gridPos.y,
+              definition: draggedFurni.definition, // Use original definition
+              // Rotation is visual, getOccupiedTiles usually doesn't need it directly
+              // but the renderer will use draggedFurni.rotation for the ghost image.
+              getOccupiedTiles: ClientFurniture.prototype.getOccupiedTiles,
+            };
+            tempGhostProto
+              .getOccupiedTiles()
+              .forEach((tp) => setTileHighlight(tp.x, tp.y, color));
+          } else {
+            uiState.editMode.placementValid = false; // Cannot place if definition missing
+          }
+        }
+        break;
+
+      // Navigate/Selected Furniture State (default case)
+      default:
+        const hoveredF = getTopmostFurnitureAtScreen(screenPos.x, screenPos.y);
+        const player = gameState.myAvatarId
+          ? gameState.avatars[gameState.myAvatarId]
+          : null;
+        const canLayoutEdit =
+          player?.isAdmin &&
+          uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_NAVIGATE;
+
+        if (canLayoutEdit) {
+          setTileHighlight(
+            gridPos.x,
+            gridPos.y,
+            CLIENT_CONFIG.TILE_EDIT_HIGHLIGHT_COLOR
+          );
+        } else if (
+          hoveredF &&
+          hoveredF.id !== uiState.editMode.selectedFurnitureId
+        ) {
+          hoveredF
+            .getOccupiedTiles()
+            .forEach((tp) =>
+              setTileHighlight(
+                tp.x,
+                tp.y,
+                CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR
+              )
+            );
+        } else if (!hoveredF && gameState.highlightedTile) {
+          setTileHighlight(
+            gameState.highlightedTile.x,
+            gameState.highlightedTile.y,
+            CLIENT_CONFIG.FURNI_HOVER_HIGHLIGHT_COLOR
+          );
+        }
+        // Selected furniture highlighting is handled by ClientFurniture.draw
+        break;
     }
   }
   // --- Navigate Mode Highlighting ---
@@ -2131,7 +2237,12 @@ export function updateHighlights() {
 }
 
 /** Checks if placement is valid client-side (visual feedback only). */
-export function isClientPlacementValid(definition, gridX, gridY) {
+export function isClientPlacementValid(
+  definition,
+  gridX,
+  gridY,
+  ignoreFurniId = null
+) {
   if (
     !definition ||
     !SHARED_CONFIG ||
@@ -2160,31 +2271,32 @@ export function isClientPlacementValid(definition, gridX, gridY) {
       const stackOnThisTile = Object.values(gameState.furniture).filter(
         (f) =>
           f instanceof ClientFurniture &&
+          f.id !== ignoreFurniId && // Don't collide with self when dragging
           Math.round(f.visualX) === gx &&
           Math.round(f.visualY) === gy
       );
       const topItemOnThisTile = stackOnThisTile.sort(
         (a, b) => (b.visualZ ?? 0) - (a.visualZ ?? 0)
       )[0];
-      if (topItemOnThisTile && !topItemOnThisTile.definition?.stackable)
-        return false; // Cannot stack on top of non-stackable
 
-      // Check if blocked by SOLID item (only matters if placing item is also solid)
-      if (
-        !definition.isWalkable &&
-        !definition.isFlat &&
-        isClientOccupiedBySolid(gx, gy)
-      ) {
-        const solidBlocker = stackOnThisTile.find(
-          (f) => !f.definition?.isWalkable && !f.definition?.isFlat
-        );
-        if (solidBlocker) return false; // Blocked by existing solid item
+      if (topItemOnThisTile) {
+        if (!topItemOnThisTile.definition?.stackable) return false; // Cannot stack on top of non-stackable
+
+        // Check if blocked by SOLID item (only matters if placing item is also solid)
+        if (
+          !definition.isWalkable && // Current item is solid
+          !definition.isFlat &&
+          !topItemOnThisTile.definition?.isWalkable && // Item below is solid
+          !topItemOnThisTile.definition?.isFlat
+        ) {
+          return false; // Blocked by existing solid item
+        }
       }
     }
   }
 
-  // Check stack height limit
-  const estimatedBaseZ = getClientStackHeightAt(gridX, gridY);
+  // Check stack height limit, ignoring self if dragging
+  const estimatedBaseZ = getClientStackHeightAt(gridX, gridY, ignoreFurniId);
   const itemBaseZ = estimatedBaseZ + (definition.zOffset || 0);
   const itemStackHeight =
     definition.stackHeight ?? (definition.isFlat ? 0 : 1.0);

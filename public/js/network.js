@@ -575,15 +575,64 @@ async function setupSocketListeners() {
     if (!updateData || updateData.id == null) return;
     const furniIdStr = String(updateData.id);
     const furni = gameState.furniture[furniIdStr];
+
     if (furni instanceof ClientFurniture) {
+      const oldX = furni.x;
+      const oldY = furni.y;
+      const oldZ = furni.z;
       const oldState = furni.state;
-      furni.update(updateData);
-      if (
-        updateData.state !== undefined &&
-        oldState !== updateData.state &&
-        furni.definition?.canUse
-      ) {
-        playSound("use");
+
+      furni.update(updateData); // This updates x,y,z, visualX/Y/Z, targetX/Y/Z, and drawOrder
+
+      const movedByThisClientWhileDragging =
+        uiState.isEditMode &&
+        uiState.editMode.state === "dragging_furni" && // Use defined const if available
+        String(uiState.editMode.draggedFurnitureId) === furniIdStr;
+
+      if (movedByThisClientWhileDragging) {
+        // This client just successfully dropped the furniture they were dragging.
+        // The `request_move_furni` was sent, and this is the confirmation.
+        // No sound needed here as handleMouseUp in inputHandler already plays "place" sound.
+        
+        // Ensure the selected furniture ID is correctly set to the one just moved.
+        // This should already be the case as selectedFurnitureId is not cleared during drag start.
+        uiState.editMode.selectedFurnitureId = furniIdStr; 
+        
+        // Clean up drag-specific UI state and transition to selected state.
+        // stopDraggingFurniture was already called in inputHandler on mouseUp.
+        // setEditState was also called in inputHandler on mouseUp.
+        // If the server disagrees with the drop, an action_failed would come, or
+        // the furniture might snap back due to a subsequent furni_updated.
+        // For now, assume the server's update is authoritative.
+        // If furni.x,y,z from server differs from where client tried to drop, it will snap.
+        console.log(`[furni_updated] Confirmed move for dragged item ${furniIdStr}. UI state already transitioned.`);
+        // Explicitly ensure selection is active on the moved item.
+        if (typeof setSelectedFurniture === "function") { // Check if uiManager is fully loaded
+            setSelectedFurniture(furniIdStr); // Re-affirm selection to update highlights etc.
+        }
+        if (uiState.editMode.state !== CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI) {
+            // If somehow not in selected state, force it.
+            if (typeof uiManager !== 'undefined' && typeof uiManager.setEditState === 'function') {
+                 uiManager.setEditState(CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI);
+            } else if (typeof setEditState === 'function') { // Fallback if uiManager isn't directly available
+                 setEditState(CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI);
+            }
+        }
+
+
+      } else {
+        // Furniture was updated by another client, or it's a state change (not a move by this client)
+        const wasMoved = updateData.x !== undefined || updateData.y !== undefined || updateData.z !== undefined;
+        const stateChanged = updateData.state !== undefined && oldState !== furni.state;
+
+        if (wasMoved) {
+          // If another user moved it, or it snapped back after this client's invalid drop
+          // that wasn't caught by client-side validation before sending request.
+          playSound("place"); 
+        } else if (stateChanged && furni.definition?.canUse) {
+          // Handle state change sounds (e.g. lamp on/off)
+          playSound("use");
+        }
       }
     }
   });

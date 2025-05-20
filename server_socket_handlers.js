@@ -382,6 +382,8 @@ async function handleConnection(socket) {
     handleTradeConfirmOffer(socket, data)
   ); // Async (due to DB)
   socket.on("trade_cancel", (data) => handleTradeCancel(socket, data));
+  socket.on("request_move_furni", (data) => handleRequestMoveFurni(socket, data)); // Async
+  socket.on("request_move_furni", (data) => handleRequestMoveFurni(socket, data)); // Async
   // Lifecycle listeners
   socket.on("disconnect", (reason) => handleDisconnect(socket, reason)); // Async
   socket.on("connect_error", (err) => handleConnectError(socket, err));

@@ -15,6 +15,7 @@ import {
   requestChangeRoom,
   requestRecolorFurni,
   disconnectSocket,
+  request_move_furni, // Added for furniture dragging drop
   // Admin requests are usually triggered via UI, not direct keybinds here
 } from "./network.js";
 import {
@@ -36,6 +37,7 @@ import {
   hideContextMenu, // NEW: To hide menu on other actions
   handleEditModeClick, // NEW: Moved logic to uiManager
   handleNavigateModeClick, // NEW: Moved logic to uiManager
+  stopDraggingFurniture, // Added for furniture dragging cleanup
 } from "./uiManager.js";
 import { playSound } from "./sounds.js";
 
@@ -370,6 +372,30 @@ function handleMouseDown(event) {
     // Assume it's a click initially; mousemove will set isDragging if threshold exceeded
     // We only set isDragging definitively on button 1 or 2 mousedown.
     // inputState.isDragging = false; // Don't reset isDragging here if another button is held
+
+  // Handle starting furniture drag
+  if (
+    uiState.isEditMode &&
+    uiState.editMode.state === CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI &&
+    uiState.editMode.selectedFurnitureId !== null
+  ) {
+    const clickedFurniture = getTopmostFurnitureAtScreen(
+      inputState.currentMouseScreenPos.x,
+      inputState.currentMouseScreenPos.y
+    );
+    if (
+      clickedFurniture &&
+      clickedFurniture.id === uiState.editMode.selectedFurnitureId
+    ) {
+      event.preventDefault(); // Prevent text selection or other default actions
+      // Import uiManager if not already (should be, but good practice to ensure)
+      // import { startDraggingSelectedFurniture } from './uiManager.js'; // Already imported
+      uiManager.startDraggingSelectedFurniture( // Assuming uiManager is globally accessible or imported
+        inputState.currentMouseGridPos.x,
+        inputState.currentMouseGridPos.y
+      );
+    }
+  }
   }
 }
 
@@ -384,6 +410,41 @@ function handleMouseUp(event) {
     inputState.isDragging = false;
     uiState.gameContainer?.classList.remove("dragging"); // Remove dragging cursor style
     // }
+  }
+
+  // Handle furniture drop after dragging
+  if (event.button === 0 && uiState.isEditMode && uiState.editMode.state === "dragging_furni") {
+    const furniId = uiState.editMode.draggedFurnitureId;
+    const targetX = inputState.currentMouseGridPos.x;
+    const targetY = inputState.currentMouseGridPos.y;
+    const draggedFurniture = gameState.furniture[furniId];
+    const originalRotation = draggedFurniture?.rotation; // Get rotation from the game state object
+
+    if (furniId && draggedFurniture) { // Ensure furniId and the furniture object exist
+      if (uiState.editMode.placementValid) {
+        console.log(`Requesting move for ${furniId} to (${targetX},${targetY}) rot: ${originalRotation}`);
+        request_move_furni(furniId, targetX, targetY, originalRotation);
+        // Server will confirm and then furni_updated will update gameState.
+        // The selectedFurnitureId should already be furniId.
+        uiManager.setEditState(CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI);
+        playSound("place"); // Play place sound on successful drop
+      } else {
+        // Invalid drop position
+        uiManager.showNotification("Cannot place item there.", "error");
+        playSound("error");
+        // No need to visually "snap back" if the original furniture's gameState was not changed.
+        // The ghost just disappears.
+        // Transition state back to selected, keeping the same furniture selected.
+        uiManager.setEditState(CLIENT_CONFIG.EDIT_STATE_SELECTED_FURNI);
+      }
+    } else {
+      console.error("Could not drop furniture: ID or furniture object missing.", furniId);
+      uiManager.setEditState(CLIENT_CONFIG.EDIT_STATE_NAVIGATE); // Fallback to navigate if something is wrong
+    }
+    // Cleanup drag state properties in uiManager AFTER handling the drop.
+    // setEditState above will trigger its own cleanup for dragging_furni state,
+    // but calling stopDraggingFurniture explicitly ensures all drag properties are reset.
+    uiManager.stopDraggingFurniture();
   }
 }
 
@@ -413,7 +474,12 @@ function handleMouseMove(event) {
   updateMouseWorldPosition(); // Update internal state used by highlights etc.
 
   // Handle camera panning if dragging flag is set (by middle/right mouse)
-  if (inputState.isDragging) {
+  // AND not currently dragging furniture (left mouse button action)
+  if (
+    inputState.isDragging &&
+    (!uiState.isEditMode ||
+      uiState.editMode.state !== "dragging_furni") // Use string directly for now
+  ) {
     // Calculate delta from the last recorded screen position
     const dx = event.clientX - inputState.lastMousePos.x;
     const dy = event.clientY - inputState.lastMousePos.y;
@@ -469,6 +535,11 @@ function handleMouseWheel(event) {
 }
 
 // --- Button Click Handlers (Specific Actions) ---
+
+// Ensure uiManager is accessible, typically it's imported and available.
+// If not, this might need adjustment based on how uiManager is exposed.
+// For this example, assuming uiManager is an imported module with exported functions.
+// import * as uiManager from './uiManager.js'; // Ensure this import exists at the top
 
 /** Handles click on the reset button in the recolor panel. */
 function handleRecolorResetClick() {
