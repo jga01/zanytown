@@ -223,6 +223,20 @@ export function requestAllRoomIds() {
   emitIfConnected("request_all_room_ids");
 }
 
+// --- Move Furniture Emitter ---
+export function request_move_furni(furnitureId, targetX, targetY, rotation) {
+    // Data validation could be added here if desired, e.g. typeof targetX === 'number'
+    const payload = {
+        furniId: String(furnitureId), // Ensure ID is string
+        targetX: Math.round(targetX), // Ensure integer grid coordinates
+        targetY: Math.round(targetY),
+        rotation: parseInt(rotation, 10) // Ensure integer rotation
+    };
+    // console.log(`Sending request_move_furni with payload:`, payload); // Debug: Log payload before sending
+    emitIfConnected("request_move_furni", payload);
+}
+// --- End Move Furniture Emitter ---
+
 // --- Socket Event Listeners (Server -> Client) ---
 
 /** Sets up all listeners for events received from the server. */
