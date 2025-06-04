@@ -15,8 +15,8 @@
     "canRecolor": true,
     "spriteSheetUrl": "/img/sprites/furniture_atlas.png",
     "sprite": {
-      "anchor": {"x": 32, "y": 112},
-      "base": {"x": 128, "y": 128, "w": 64, "h": 128}
+      "anchor": {"x": 16, "y": 32},
+      "base": {"x": 32, "y": 64, "w": 32, "h": 32}
     }
   },
   {
@@ -35,8 +35,8 @@
     "canRecolor": true,
     "spriteSheetUrl": "/img/sprites/furniture_atlas.png",
     "sprite": {
-      "anchor": {"x": 32, "y": 112},
-      "base": {"x": 128, "y": 128, "w": 64, "h": 128}
+      "anchor": {"x": 16, "y": 32},
+      "base": {"x": 32, "y": 64, "w": 32, "h": 32}
     }
   },
   {
@@ -53,8 +53,8 @@
     "canRecolor": true,
     "spriteSheetUrl": "/img/sprites/furniture_atlas.png",
     "sprite": {
-      "anchor": {"x": 32, "y": 112},
-      "base": {"x": 64, "y": 128, "w": 64, "h": 128}
+      "anchor": {"x": 16, "y": 32},
+      "base": {"x": 32, "y": 32, "w": 32, "h": 32}
     }
   },
   {
@@ -72,8 +72,8 @@
     "canRecolor": false,
     "spriteSheetUrl": "/img/sprites/furniture_atlas.png",
     "sprite": {
-      "anchor": {"x": 32, "y": 64},
-      "base": {"x": 128, "y": 0, "w": 64, "h": 128}
+      "anchor": {"x": 32, "y": 32},
+      "base": {"x": 0, "y": 0, "w": 64, "h": 32}
     }
   },
   {
@@ -93,12 +93,8 @@
     "canRecolor": false,
     "spriteSheetUrl": "/img/sprites/furniture_atlas.png",
     "sprite": {
-      "anchor": {"x": 32, "y": 112},
-      "base": {"x": 0, "y": 0, "w": 64, "h": 128},
-      "states": {
-        "off": {"x": 0, "y": 0, "w": 64, "h": 128},
-        "on": {"x": 0, "y": 0, "w": 64, "h": 128}
-      }
+      "anchor": {"x": 16, "y": 32},
+      "base": {"x": 32, "y": 64, "w": 32, "h": 32}
     }
   },
   {
@@ -121,8 +117,8 @@
     "targetY": 2,
     "spriteSheetUrl": "/img/sprites/furniture_atlas.png",
     "sprite": {
-      "anchor": {"x": 32, "y": 112},
-      "base": {"x": 0, "y": 128, "w": 64, "h": 128}
+      "anchor": {"x": 16, "y": 64},
+      "base": {"x": 0, "y": 32, "w": 32, "h": 64}
     }
   },
   {
@@ -145,8 +141,8 @@
     "targetY": 3,
     "spriteSheetUrl": "/img/sprites/furniture_atlas.png",
     "sprite": {
-      "anchor": {"x": 32, "y": 112},
-      "base": {"x": 0, "y": 128, "w": 64, "h": 128} 
+      "anchor": {"x": 16, "y": 64},
+      "base": {"x": 0, "y": 32, "w": 32, "h": 64} 
     }
   }
 ]
